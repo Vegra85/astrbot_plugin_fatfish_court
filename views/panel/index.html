@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>大肥鱼 · 法庭</title>
+<style>
+  :root { --bg:#ffffff; --fg:#1f2328; --muted:#656d76; --line:#e5e7eb; --card:#f6f8fa; --accent:#2563eb; --bad:#c2410c; --ok:#15803d; --warnbg:#fff7ed; }
+  html[data-theme="dark"] { --bg:#16181d; --fg:#e6e6e6; --muted:#9aa4b2; --line:#2c313a; --card:#1e2128; --accent:#60a5fa; --bad:#fb923c; --ok:#4ade80; --warnbg:#2a1f16; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:16px; background:var(--bg); color:var(--fg); font:14px/1.6 system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; }
+  h1 { font-size:18px; margin:0 0 4px; }
+  h2 { font-size:15px; margin:22px 0 8px; }
+  h3 { font-size:14px; margin:16px 0 6px; color:var(--muted); font-weight:600; }
+  .sub { color:var(--muted); margin:0 0 14px; }
+  .tabs { display:flex; gap:6px; margin:0 0 12px; }
+  .tabs button { font-size:13px; padding:4px 14px; }
+  .tabs button.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:10px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:10px 12px; }
+  .card b { display:block; font-size:22px; }
+  .card span { color:var(--muted); font-size:12px; }
+  .info { margin:10px 0 0; color:var(--muted); font-size:13px; }
+  .info b { color:var(--fg); font-weight:500; }
+  .list { display:flex; flex-direction:column; gap:8px; }
+  .item { border:1px solid var(--line); border-radius:10px; padding:8px 12px; }
+  .item.faded { opacity:.6; }
+  .item .meta { color:var(--muted); font-size:12px; display:flex; flex-wrap:wrap; align-items:center; gap:2px 12px; }
+  .item .meta .who { color:var(--fg); }
+  .item .meta .right { margin-left:auto; display:flex; gap:6px; }
+  .item .text { margin-top:2px; word-break:break-word; }
+  .item .why { margin-top:2px; color:var(--muted); font-size:12px; word-break:break-word; }
+  .tag { display:inline-block; padding:0 6px; border-radius:6px; font-size:12px; border:1px solid var(--line); white-space:nowrap; color:var(--muted); }
+  .tag.bad { color:var(--bad); border-color:var(--bad); }
+  .tag.ok { color:var(--ok); border-color:var(--ok); }
+  .empty { color:var(--muted); border:1px solid var(--line); border-radius:10px; padding:10px 12px; }
+  .muted { color:var(--muted); }
+  .note { color:var(--muted); font-size:13px; margin:0 0 8px; }
+  .warn { background:var(--warnbg); border:1px solid var(--bad); border-radius:10px; padding:8px 12px; margin:0 0 10px; }
+  #err { color:var(--bad); margin:0 0 8px; }
+  #msg { color:var(--ok); margin:0 0 8px; }
+  button { font:inherit; font-size:12px; padding:2px 10px; border-radius:6px; border:1px solid var(--line); background:var(--bg); color:var(--fg); cursor:pointer; }
+  button:hover { border-color:var(--accent); color:var(--accent); }
+  button.main { background:var(--accent); border-color:var(--accent); color:#fff; font-size:13px; padding:4px 12px; }
+  button.danger:hover { border-color:var(--bad); color:var(--bad); }
+  button:disabled { opacity:.5; cursor:default; }
+  .edit { display:none; margin-top:8px; gap:6px; flex-direction:column; }
+  .edit.on { display:flex; }
+  .edit label { display:flex; gap:8px; align-items:center; font-size:12px; color:var(--muted); }
+  .edit label span { width:64px; flex:none; }
+  .edit input { flex:1; min-width:0; font:inherit; font-size:13px; padding:3px 8px; border-radius:6px; border:1px solid var(--line); background:var(--bg); color:var(--fg); }
+  .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .row input[type=text] { flex:0 1 220px; min-width:0; font:inherit; padding:4px 8px; border-radius:6px; border:1px solid var(--line); background:var(--bg); color:var(--fg); }
+  .hide { display:none; }
+</style>
+</head>
+<body>
+<h1>大肥鱼 · 法庭</h1>
+<p class="sub">两个庭：拉黑庭（不让一句气话就把人拉黑：法官判了才冷却 / 删除，只往轻里压）和纠错庭（有人指出机器人说错了先核对，真错了记成教训）。</p>
+<div id="err"></div>
+<div id="msg"></div>
+<div class="tabs"><button id="tab-block" class="on">拉黑庭</button><button id="tab-fix">纠错庭</button></div>
+
+<section id="sec-block">
+<div id="b-broken" class="warn hide"></div>
+<div class="cards">
+  <div class="card"><b id="b-cooling">-</b><span>冷却中（含审理中）</span></div>
+  <div class="card"><b id="b-blocked">-</b><span>永久不理</span></div>
+  <div class="card"><b id="b-cooled">-</b><span>冷却过（再立案直接二审）</span></div>
+  <div class="card"><b id="b-appeals">-</b><span>申诉</span></div>
+  <div class="card"><b id="b-msgs">-</b><span>记着的卷宗材料（条）</span></div>
+</div>
+<p class="info">拉黑庭：<b id="bi-on">-</b> · 模型立案：<b id="bi-model">-</b> · 群聊 / 私聊立案：<b id="bi-scene">-</b> · 再审 / 二审：<b id="bi-trial">-</b><br>
+法官：<b id="bi-judge">-</b> · 删除以后：永久不理（真做）· 删好友 <b id="bi-friend">-</b> · 清数据 <b id="bi-wipe">-</b> · 每天最多开庭 <b id="bi-cd">-</b> 次、删除 <b id="bi-dd">-</b> 个<br>
+冒充核对：<b id="bi-guard">-</b> · 申诉：<b id="bi-appeal">-</b> · 通知管理员：<b id="bi-notify">-</b></p>
+<p class="info" id="bi-selftest"></p>
+
+<h2>冷却中 / 审理中</h2>
+<p class="note">这段时间所有群和私聊都不理他；他冲机器人说的话只当证据收（机器人看不到、不回），说完安静一阵再审。「撤销」= 马上解除，之前的线索、案子不再算。</p>
+<div class="list" id="b-cool-list"></div>
+
+<h2>永久不理</h2>
+<p class="note">判了删除的人：所有群和私聊都不理、他再加好友自动拒绝。「撤销」= 解除（删掉的好友要他重新加；清掉的数据回不来）。</p>
+<div class="list" id="b-block-list"></div>
+
+<h2>冷却过</h2>
+<p class="note">冷却到点、没被删的人。再被立案直接二审（删除 / 保留）。「清掉」= 以后再被立案从一审开始。</p>
+<div class="list" id="b-cooled-list"></div>
+
+<h2>最近的案子</h2>
+<div class="list" id="b-cases"></div>
+
+<h2>申诉</h2>
+<p class="note">被冷却 / 永久不理的人私聊「/申诉 理由」，或者加好友时写的话。法庭不审申诉，要撤就点上面的「撤销」。</p>
+<div class="list" id="b-appeal-list"></div>
+</section>
+
+<section id="sec-fix" class="hide">
+<div class="cards">
+  <div class="card"><b id="n-cases">-</b><span>今天立案（不受理 <i id="n-rejected">-</i>）</span></div>
+  <div class="card"><b id="n-screened">-</b><span>今天核对了几次</span></div>
+  <div class="card"><b id="n-wrong">-</b><span>核对下来确实错了</span></div>
+  <div class="card"><b id="n-learned">-</b><span>今天记的教训</span></div>
+  <div class="card"><b id="n-given">-</b><span>核对结果给模型看</span></div>
+  <div class="card"><b id="n-reminded">-</b><span>提醒以前说错过（条）</span></div>
+  <div class="card"><b id="n-format">-</b><span>格式状态（轮）</span></div>
+  <div class="card"><b id="n-digits">-</b><span>只留数字 / 不发</span></div>
+</div>
+<p class="info">核对模型：<b id="i-judge">-</b> · 有人指出说错了：<b id="i-court">-</b> · 格式 / 验证要求：<b id="i-verify">-</b> · 教训：<b id="i-lessons">-</b></p>
+
+<h2>教训</h2>
+<p class="note">真错了才记（判断模型核对过、它确实错了；或者验证程序那种场合连着没过）。同一件事会合并；<span id="i-fade">-</span> 天没碰到、没用到就淡出（淡出的不再给模型看）。每一条都能改、能删。</p>
+<div class="list" id="lessons"></div>
+
+<h2>最近的核对</h2>
+<div class="list" id="cases"></div>
+
+<h2>格式 / 验证要求</h2>
+<div class="list" id="live"></div>
+<div class="list" id="events" style="margin-top:8px"></div>
+</section>
+
+<h2>删数据</h2>
+<p class="note">删掉跟某个人有关的东西（两个庭的都删）：纠错庭里他指出的、关于他的、提到他名字或 QQ 号的教训，他的案子和核对结果；拉黑庭里记的他的话、线索、申诉。永久不理 / 冷却的名单还留着他的号（不然删数据 = 解封），名字、原因、原话抹掉。删了就找不回来。群友也可以自己发「/纠错 忘记我」。</p>
+<div class="row">
+  <input type="text" id="forget-qq" placeholder="QQ 号" maxlength="15" inputmode="numeric">
+  <button class="main danger" id="forget-go">删掉他的数据</button>
+</div>
+
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+  const ago = (t) => {
+    if (!t) return "";
+    const s = Math.max(0, Math.floor(Date.now() / 1000 - t));
+    if (s < 60) return s + " 秒前";
+    if (s < 3600) return Math.floor(s / 60) + " 分钟前";
+    if (s < 86400) return Math.floor(s / 3600) + " 小时前";
+    return Math.floor(s / 86400) + " 天前";
+  };
+  const until = (t) => {
+    if (!t) return "";
+    const s = Math.floor(t - Date.now() / 1000);
+    if (s <= 0) return "已经到点";
+    if (s < 3600) return "还有 " + Math.ceil(s / 60) + " 分钟";
+    return "还有 " + (s / 3600).toFixed(1) + " 小时";
+  };
+  const MODE = { off: "不删 / 不清", shadow: "只提醒（本来会做）", auto: "真做" };
+  const FIELDS = [["when", "什么情况"], ["wrong", "错的说法"], ["right", "对的说法"], ["basis", "依据"], ["topic", "话题词"]];
+  let api = null, last = null, editing = null;
+
+  function lessonHtml(x) {
+    const fact = (x.kind || "事实") === "事实";
+    const body = fact
+      ? (x.when ? esc(x.when) + "：" : "") + "说「" + esc(x.wrong) + "」→ 对的是「" + esc(x.right || "（没写）") + "」"
+      : esc(x.when) + "：要" + esc(x.right);
+    const form = FIELDS.map(([k, lab]) => '<label><span>' + lab + '</span><input type="text" data-f="' + k + '" value="' + esc(x[k] || "") + '"></label>').join("");
+    return '<div class="item' + (x.faded ? " faded" : "") + '" data-id="' + esc(x.id) + '"><div class="meta">' +
+      '<span class="tag">' + esc(x.kind || "事实") + "</span>" + (x.faded ? '<span class="tag bad">已淡出</span>' : "") +
+      (x.private ? '<span class="tag">私聊里的</span>' : "") + "<span>" + ago(x.last || x.t) + "</span>" +
+      "<span>" + esc(x.n || 1) + " 次 · 给看过 " + esc(x.used || 0) + " 次</span>" +
+      '<span class="who">' + esc(x.src || "") + "</span>" +
+      '<span class="right"><button data-op="edit">改</button><button class="danger" data-op="del">删</button></span></div>' +
+      '<div class="text">' + body + "</div>" + (x.basis ? '<div class="why">依据：' + esc(x.basis) + "</div>" : "") +
+      '<div class="edit' + (editing === x.id ? " on" : "") + '">' + form +
+      '<div class="row"><button class="main" data-op="save">保存</button><button data-op="cancel">算了</button></div></div></div>';
+  }
+
+  function personRow(uid, e, extra, op, label) {
+    return '<div class="item"><div class="meta"><span class="who">' + esc(e.name || "（没有名字）") + " (" + esc(uid) + ")</span>" +
+      (e.where ? "<span>" + esc(e.where) + "</span>" : "") + extra +
+      '<span class="right"><button class="danger" data-uid="' + esc(uid) + '" data-op="' + op + '">' + label + "</button></span></div>" +
+      (e.why ? '<div class="why">原因：' + esc(e.why) + "</div>" : "") + "</div>";
+  }
+
+  function renderBlock(b) {
+    if (!b) return;
+    const cool = b.cooling || {}, blk = b.blocked || {}, cooled = b.cooled || {};
+    $("b-cooling").textContent = Object.keys(cool).length;
+    $("b-blocked").textContent = Object.keys(blk).length;
+    $("b-cooled").textContent = Object.keys(cooled).length;
+    $("b-appeals").textContent = (b.appeals || []).length;
+    $("b-msgs").textContent = (b.msglog || {}).msgs || 0;
+    $("bi-on").textContent = b.enabled ? "开" : "关";
+    $("bi-model").textContent = b.model_file ? "开" : "关";
+    $("bi-scene").textContent = (b.group ? "群聊开" : "群聊关") + " / " + (b.private ? "私聊开" : "私聊关");
+    $("bi-trial").textContent = (b.retrial ? "再审开" : "再审关") + " / " + (b.second ? "二审开" : "二审关");
+    $("bi-judge").textContent = b.judge || "-";
+    $("bi-friend").textContent = MODE[b.friend_mode] || b.friend_mode;
+    $("bi-wipe").textContent = MODE[b.wipe_mode] || b.wipe_mode;
+    $("bi-cd").textContent = b.court_daily;
+    $("bi-dd").textContent = b.delete_daily;
+    $("bi-guard").textContent = b.guard ? "开" : "关";
+    $("bi-appeal").textContent = b.appeal ? "开" : "关";
+    $("bi-notify").textContent = b.notify ? "开" : "关";
+    const st = b.selftest;
+    $("bi-selftest").textContent = st ? ("上次自检（" + ago(st.t) + "，法官 " + (st.judge || "-") + "）：" + ((st.summary || {}).line || "")) : "还没自检过：管理员发「/法庭 自检」（会花一点钱，先说明再确认）。";
+    const bro = $("b-broken");
+    if (b.broken) { bro.textContent = "拉黑庭的存档" + b.broken + "：这次只读不写（不立案）。修好或者删掉 block.json 再重载插件。"; bro.classList.remove("hide"); }
+    else bro.classList.add("hide");
+    $("b-cool-list").innerHTML = Object.entries(cool).map(([u, e]) =>
+      personRow(u, e, '<span class="tag bad">' + esc(until(e.until)) + "</span><span>" + ago(e.t) + "开始</span>" + (e.by ? "<span>" + esc(e.by) + "立案</span>" : ""), "unblock", "撤销")).join("") ||
+      '<div class="empty">现在没有人在冷却。</div>';
+    $("b-block-list").innerHTML = Object.entries(blk).map(([u, e]) =>
+      personRow(u, e, "<span>" + ago(e.t) + "起</span>" + (e.case ? "<span>案子 " + esc(e.case) + "</span>" : ""), "unblock", "撤销")).join("") ||
+      '<div class="empty">没有永久不理的人。</div>';
+    $("b-cooled-list").innerHTML = Object.entries(cooled).map(([u, e]) =>
+      personRow(u, {}, "<span>冷却过 " + esc(e.n || 1) + " 次</span><span>最近一次 " + ago(e.last) + "到期</span>", "unblock", "清掉")).join("") ||
+      '<div class="empty">还没有冷却过的人。</div>';
+    $("b-cases").innerHTML = (b.cases || []).map((c) => {
+      const rt = c.retrials || [];
+      const res = c.result || c.state || "";
+      const bad = ["删除", "冷却"].includes(res) || c.state === "冷却中";
+      return '<div class="item"><div class="meta"><span>' + ago(c.t) + "</span><span>" + esc(c.where || "") + '</span><span class="who">' +
+        esc(c.name || "") + " (" + esc(c.uid) + ")</span>" + '<span class="tag">' + esc(c.stage || "") + "</span>" +
+        '<span class="tag">' + esc(c.by || "机器人") + "立案</span>" + (c.verdict ? '<span class="tag">法官判 ' + esc(c.verdict) + "</span>" : "") +
+        '<span class="tag' + (bad ? " bad" : (res === "放过" ? " ok" : "")) + '">' + esc(res) + "</span>" +
+        (rt.length ? '<span class="tag">再审 ' + rt.length + " 次</span>" : "") + (c.n_ev ? "<span>冷却中收了 " + esc(c.n_ev) + " 句</span>" : "") +
+        (c.wiped ? '<span class="tag">删过数据</span>' : "") + "</div>" +
+        '<div class="text">原因：' + esc(c.why || "") + (c.reason ? " · 法官：" + esc(c.reason) : "") + "</div>" +
+        '<div class="why">核实 ' + esc(c.n_ok || 0) + " 句" + (c.result_why ? " · " + esc(c.result_why) : "") +
+        (c.friend ? " · 删好友：" + esc(c.friend) : "") + (c.wipe ? " · 清数据：" + esc(c.wipe) : "") +
+        (rt.length ? " · 再审：" + rt.map((r) => esc(r.result) + (r.why ? "（" + esc(r.why) + "）" : "")).join("；") : "") + "</div></div>";
+    }).join("") || '<div class="empty">还没有案子。</div>';
+    $("b-appeal-list").innerHTML = (b.appeals || []).map((a) =>
+      '<div class="item"><div class="meta"><span>' + ago(a.t) + '</span><span class="who">' + esc(a.name || "") + " (" + esc(a.uid) + ")</span>" +
+      '<span class="tag">' + esc(a.src || "") + "</span>" + (a.case ? "<span>案子 " + esc(a.case) + "</span>" : "") + "</div>" +
+      '<div class="text">「' + esc(a.text || "（没写理由）") + "」</div>" + (a.state ? '<div class="why">当时：' + esc(a.state) + "</div>" : "") + "</div>").join("") ||
+      '<div class="empty">还没有人申诉。</div>';
+  }
+
+  function render(d) {
+    if (!d) return;
+    last = d;
+    renderBlock(d.block);
+    const t = d.today || {}, c = d.counts || {};
+    $("n-cases").textContent = t.cases || 0;
+    $("n-rejected").textContent = t.rejected || 0;
+    $("n-screened").textContent = t.screened || 0;
+    $("n-wrong").textContent = t.wrong || 0;
+    $("n-learned").textContent = t.learned || 0;
+    $("n-given").textContent = t.given || 0;
+    $("n-reminded").textContent = t.reminded || 0;
+    $("n-format").textContent = t.format_turns || 0;
+    $("n-digits").textContent = (t.digits_fixed || 0) + " / " + (t.digits_dropped || 0);
+    $("i-judge").textContent = d.judge || "-";
+    $("i-court").textContent = d.court ? (d.check ? "开（核对开）" : "开（核对关：只立案）") : "关";
+    $("i-verify").textContent = d.verify ? "开" : "关";
+    $("i-lessons").textContent = (c.all || 0) + " 条（在用 " + (c.live || 0) + "）" + (d.enabled ? "" : " · 纠错庭关着");
+    const lv = d.lessons || {};
+    $("i-fade").textContent = lv.lesson_days == null ? "-" : lv.lesson_days;
+    if (!editing) {
+      $("lessons").innerHTML = (lv.lessons || []).map(lessonHtml).join("") ||
+        '<div class="empty">还没有教训。有人指出它说错了、核对下来它确实错了，就会记一条。</div>';
+    }
+    $("cases").innerHTML = (d.cases || []).map((r) => {
+      const ck = r.check || null;
+      const res = ck ? (ck.real ? ("核对：" + esc(ck.verdict) + (ck.right ? "，对的是「" + esc(ck.right) + "」" : "")) : "核对：不算纠正") : "没核对";
+      return '<div class="item"><div class="meta"><span>' + ago(r.t) + "</span><span>" + esc(r.where || "") + "</span>" +
+        '<span class="who">' + esc(r.name || "") + (r.admin ? "（管理员）" : "") + "</span>" +
+        '<span class="tag">' + esc(r.kind || "") + "</span>" + '<span class="tag">' + esc(r.inst || "") + "</span>" +
+        (ck && ck.real && ck.verdict === "错了" ? '<span class="tag bad">确实错了</span>' : "") +
+        (ck && ck.real && ck.verdict === "没错" ? '<span class="tag ok">没说错</span>' : "") +
+        (r.given ? '<span class="tag">给模型看过</span>' : "") + (r.stance ? '<span class="tag">它' + esc(r.stance) + "</span>" : "") +
+        '</div><div class="text">他说：「' + esc(r.his) + "」</div>" +
+        '<div class="why">质疑的是它这句：「' + esc(r.her) + "」 · " + res + (ck && ck.basis ? "（" + esc(ck.basis) + "）" : "") + "</div></div>";
+    }).join("") || '<div class="empty">最近没有人说它说错了。</div>';
+    $("live").innerHTML = (d.live || []).map((r) =>
+      '<div class="item"><div class="meta"><span>' + esc(r.where || "") + '</span><span class="who">' + esc(r.name || r.uid) + "</span>" +
+      "<span>没过 " + esc(r.fails) + " 次</span>" + (r.con ? '<span class="tag">' + esc(r.con) + "</span>" : "") +
+      (r.stop_left ? '<span class="tag bad">停着，还有 ' + Math.ceil(r.stop_left / 60) + " 分钟</span>" : "") +
+      '<span class="right"><button data-conv="' + esc(r.conv) + '" data-uid="' + esc(r.uid) + '" data-op="clear">解除</button></span></div>' +
+      '<div class="text">最后一次：' + esc(r.last || "") + "</div></div>").join("") ||
+      '<div class="empty">现在没有在纠错的（验证程序判它没过才会有）。</div>';
+    $("events").innerHTML = (d.events || []).map((e) =>
+      '<div class="item"><div class="meta"><span>' + ago(e.t) + "</span><span>" + esc(e.where || "") + '</span><span class="who">' +
+      esc(e.name || e.uid) + '</span><span class="tag">' + esc(e.kind) + '</span></div><div class="text">' + esc(e.text) + "</div></div>").join("");
+  }
+
+  function say(m) { $("msg").textContent = m || ""; if (m) setTimeout(() => { if ($("msg").textContent === m) $("msg").textContent = ""; }, 6000); }
+
+  async function load() {
+    try { render(await api.apiGet("state")); $("err").textContent = ""; }
+    catch (e) { $("err").textContent = "读不到插件状态：" + (e && e.message ? e.message : e); }
+  }
+
+  async function act(body, btn) {
+    if (!api) return null;
+    if (btn) btn.disabled = true;
+    try {
+      const d = await api.apiPost("action", body);
+      $("err").textContent = "";
+      say(d && d.msg);
+      return d;
+    } catch (e) {
+      $("err").textContent = "没成功：" + (e && e.message ? e.message : e);
+      return null;
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  function tab(which) {
+    $("tab-block").classList.toggle("on", which === "block");
+    $("tab-fix").classList.toggle("on", which === "fix");
+    $("sec-block").classList.toggle("hide", which !== "block");
+    $("sec-fix").classList.toggle("hide", which !== "fix");
+  }
+  $("tab-block").addEventListener("click", () => tab("block"));
+  $("tab-fix").addEventListener("click", () => tab("fix"));
+
+  $("sec-block").addEventListener("click", async (ev) => {
+    const b = ev.target.closest("button[data-op=unblock]");
+    if (!b) return;
+    if (!confirm((b.textContent === "清掉" ? "清掉 " : "撤销 ") + b.dataset.uid + "？之前的线索、案子不再算。")) return;
+    const d = await act({ m: "unblock", uid: b.dataset.uid }, b);
+    if (d) render(d);
+  });
+
+  $("lessons").addEventListener("click", async (ev) => {
+    const b = ev.target.closest("button[data-op]");
+    if (!b) return;
+    const item = b.closest(".item");
+    const id = item && item.dataset.id;
+    const op = b.dataset.op;
+    if (op === "edit") { editing = id; item.querySelector(".edit").classList.add("on"); return; }
+    if (op === "cancel") { editing = null; render(last); return; }
+    if (op === "del") {
+      if (!confirm("删掉这条教训？")) return;
+      const d = await act({ m: "del", id: id }, b);
+      if (d) { editing = null; render(d); }
+      return;
+    }
+    if (op === "save") {
+      const fields = {};
+      item.querySelectorAll("input[data-f]").forEach((i) => { fields[i.dataset.f] = i.value; });
+      const d = await act({ m: "edit", id: id, fields: fields }, b);
+      if (d) { editing = null; render(d); }
+    }
+  });
+
+  $("live").addEventListener("click", async (ev) => {
+    const b = ev.target.closest("button[data-op=clear]");
+    if (!b) return;
+    const d = await act({ m: "clear", conv: b.dataset.conv, uid: b.dataset.uid }, b);
+    if (d) render(d);
+  });
+
+  $("forget-go").addEventListener("click", async (ev) => {
+    const qq = ($("forget-qq").value || "").replace(/\D/g, "");
+    if (!qq) { $("err").textContent = "先填 QQ 号。"; return; }
+    if (!confirm("删掉 " + qq + " 的数据？删了找不回来。")) return;
+    const d = await act({ m: "forget", uid: qq }, ev.currentTarget);
+    if (d) { $("forget-qq").value = ""; render(d); }
+  });
+
+  async function start() {
+    for (let i = 0; i < 50 && !window.AstrBotPluginView; i++) await new Promise((r) => setTimeout(r, 100));
+    api = window.AstrBotPluginView;
+    if (!api) { $("err").textContent = "这个页面要在 AstrBot 的插件页面里打开。"; return; }
+    await api.ready();
+    await load();
+    setInterval(() => { if (!editing) load(); }, 15000);
+  }
+  window.addEventListener("load", start);
+})();
+</script>
+</body>
+</html>

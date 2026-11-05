@@ -1,0 +1,432 @@
+{
+  "court": {
+    "description": "总开关",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "description": "开启 大肥鱼 · 法庭",
+        "type": "bool",
+        "default": true,
+        "hint": "关了两个庭都不做事（教训、名单都留着；永久不理 / 冷却中的人这时也不挡了）"
+      }
+    }
+  },
+  "fixup": {
+    "description": "纠错庭（有人指出说错了先核对、真错了记教训；入群验证题只发数字）",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "description": "开启纠错庭",
+        "type": "bool",
+        "default": true,
+        "hint": "纠错庭总开关：关了不立案、不核对、不加状态（教训还留着）。就是原来的「大肥鱼 · 纠错」v0.1.0，行为没变"
+      },
+      "group": {
+        "description": "群里也管",
+        "type": "bool",
+        "default": true,
+        "hint": "关了纠错庭只在私聊里管（v0.1.0 法庭新加的开关）"
+      },
+      "court_enable": {
+        "description": "有人指出说错了 → 立案",
+        "type": "bool",
+        "default": true,
+        "hint": "冲机器人说的（私聊 / @ / 唤醒词 / 引用它，或者它刚回过他）、它这一阵说过的一句在前面、这句像在说它错了或在怀疑 → 按规则立案（光怀疑又没理由的玩笑不受理）"
+      },
+      "check": {
+        "description": "立案后让判断模型核对",
+        "type": "bool",
+        "default": true,
+        "hint": "判断模型看前后文：他是不是真在纠正、它错没错、对的是什么、依据。结果下一次回他时给模型看（只给事实，认不认、怎么说模型自己定）；关了就只立案、不核对、不记教训"
+      },
+      "judge_provider_id": {
+        "description": "核对用哪个模型",
+        "type": "string",
+        "default": "",
+        "hint": "留空 = 这个会话正在用的对话模型。建议选一个便宜、快、不开思考的模型",
+        "_special": "select_provider"
+      },
+      "judge_timeout_sec": {
+        "description": "核对最多等模型几秒",
+        "type": "float",
+        "default": 30.0,
+        "hint": "超时算这次没核对成（不影响回话）"
+      },
+      "wait_sec": {
+        "description": "回他之前最多等核对几秒",
+        "type": "float",
+        "default": 8.0,
+        "hint": "他说「你说错了」又 @ 了机器人：回他之前先等核对出结果；等不到这一轮先不给，出了结果下一轮给。这时还没拿会话锁，不卡别的会话"
+      },
+      "status_min": {
+        "description": "核对结果多少分钟内还给",
+        "type": "float",
+        "default": 15.0,
+        "hint": "核对出来以后，他多少分钟内再找机器人还会给模型看（只给一次）"
+      },
+      "judge_daily_max": {
+        "description": "每天最多核对几次",
+        "type": "int",
+        "default": 200,
+        "hint": "防有人刷「你说错了」烧钱；到了只立案不核对"
+      },
+      "judge_hourly_per_user": {
+        "description": "同一个人一小时最多让它核对几次",
+        "type": "int",
+        "default": 6,
+        "hint": "超过的只立案不核对"
+      },
+      "window_min": {
+        "description": "它说过的话多少分钟内被质疑才算",
+        "type": "float",
+        "default": 10.0,
+        "hint": "超过这么久的话被说「不对」，多半不是在说它"
+      },
+      "near_sec": {
+        "description": "它刚回过他多少秒内，没 @ 也算冲它说的",
+        "type": "float",
+        "default": 120.0,
+        "hint": "群里它刚回过他，他接着说「不对吧」，不 @ 也算"
+      },
+      "lessons": {
+        "description": "真错了就记教训",
+        "type": "bool",
+        "default": true,
+        "hint": "核对说它确实错了 → 记一条（什么情况、错的说法、对的说法、依据、谁指出的）；以后聊到类似的事提醒「这类事你以前说错过」"
+      },
+      "lesson_turn": {
+        "description": "每轮最多提醒几条教训",
+        "type": "int",
+        "default": 2,
+        "hint": "跟这一轮他说的话对上话题词（至少两个）的才提醒"
+      },
+      "lesson_chars": {
+        "description": "每条教训最多几个字",
+        "type": "int",
+        "default": 70,
+        "hint": "给模型看的那一行的长度上限"
+      },
+      "lesson_max": {
+        "description": "最多记几条教训",
+        "type": "int",
+        "default": 80,
+        "hint": "超了先删最淡的（越久没碰到、没用到越淡）"
+      },
+      "lesson_days": {
+        "description": "多少天没碰到就淡出",
+        "type": "float",
+        "default": 45.0,
+        "hint": "淡出的不再给模型看，面板里还看得到、能删能改"
+      },
+      "half_days": {
+        "description": "教训的半衰期（天）",
+        "type": "float",
+        "default": 30.0,
+        "hint": "越久没碰到、没给模型看过越淡；超过上限时先删最淡的"
+      },
+      "lesson_daily_per_user": {
+        "description": "同一个人每天最多让它记几条新教训",
+        "type": "int",
+        "default": 5,
+        "hint": "防有人一直说它错、把错的东西塞进教训；0 = 不限"
+      },
+      "private_stay": {
+        "description": "私聊里记的教训只在那个私聊里用",
+        "type": "bool",
+        "default": true,
+        "hint": "开着：私聊里被纠正的事不会在群里被提起（防私聊的事漏进群）"
+      },
+      "verify_enable": {
+        "description": "验证题 / 格式要求",
+        "type": "bool",
+        "default": true,
+        "hint": "验证程序出题（「请在 60 秒内发送 3+5 的运算结果 否则移出」）、判它没过 → 下一轮给状态、发之前查格式、连着没过先停、过了记教训。真人说「答案错误」、管理员说的不算"
+      },
+      "rewrite": {
+        "description": "只发数字的题：取不出数字时让模型重写一次",
+        "type": "bool",
+        "default": true,
+        "hint": "先从它自己的话里取数字（「26 嘛」→「26」）；取不出来就让对话模型重写一次，还不行这条不发"
+      },
+      "stop_after": {
+        "description": "进了纠错以后再没过几次就先停",
+        "type": "int",
+        "default": 2,
+        "hint": "止损：连着没过还一直答，只会被踢"
+      },
+      "stop_min": {
+        "description": "停多少分钟",
+        "type": "float",
+        "default": 30.0,
+        "hint": "这段时间里这个号找它，它不回"
+      },
+      "verify_window_min": {
+        "description": "多少分钟内的几次没过算连着",
+        "type": "float",
+        "default": 15.0,
+        "hint": "超过这么久的不算"
+      },
+      "verify_gap_sec": {
+        "description": "它回完多少秒内对方判它，才算在判它那句",
+        "type": "float",
+        "default": 120.0,
+        "hint": "超过这么久对方再说「验证失败」，多半不是在说它刚才那句"
+      },
+      "skip_ai": {
+        "description": "认 AI 插件认出来的机器人说「你错了」不算",
+        "type": "bool",
+        "default": true,
+        "hint": "装了 大肥鱼 · 认 AI（astrbot_plugin_fatfish_aiguard）才有用：它认出来的别人家的机器人说的「不对」不立案（验证程序那种照样认）"
+      },
+      "private": {
+        "description": "私聊里也管",
+        "type": "bool",
+        "default": true,
+        "hint": "关了纠错庭只在群里管"
+      },
+      "groups": {
+        "description": "只在这些群里用",
+        "type": "list",
+        "default": [],
+        "hint": "填群号；空 = 所有群"
+      },
+      "skip_groups": {
+        "description": "这些群不用",
+        "type": "list",
+        "default": [],
+        "hint": "填群号"
+      }
+    }
+  },
+  "block": {
+    "description": "拉黑庭（不让一句气话就把人拉黑：立案 → 法官一审 → 冷却中再审 → 二审）",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "description": "开启拉黑庭",
+        "type": "bool",
+        "default": true,
+        "hint": "拉黑庭总开关：关了不立案、不再审、也不挡人（名单都留着，再打开接着用）"
+      },
+      "model_file": {
+        "description": "模型能自己立案",
+        "type": "bool",
+        "default": true,
+        "hint": "给主模型一个工具（fatfish_court_file）：它不想再理一个人时调用 → 立案。关了只能管理员用「/法庭 立案」"
+      },
+      "group": {
+        "description": "群聊里能立案",
+        "type": "bool",
+        "default": true,
+        "hint": "模型在群里调工具立案（管理员的指令不看这个开关）"
+      },
+      "private": {
+        "description": "私聊里能立案",
+        "type": "bool",
+        "default": true,
+        "hint": "模型在私聊里调工具立案（管理员的指令不看这个开关）。不想要私聊类庭审就关掉"
+      },
+      "retrial": {
+        "description": "冷却中收证据、再审",
+        "type": "bool",
+        "default": true,
+        "hint": "冷却中他冲机器人说的话（私聊、@ 它、回复它）只当证据收（不回、不进对话记录、不给主模型看）；说完安静一阵 → 再审：删除 / 不动。关了：冷却中什么都不收，冷却到点就恢复"
+      },
+      "second": {
+        "description": "冷却过的人再被立案：二审",
+        "type": "bool",
+        "default": true,
+        "hint": "冷却到点、没被删的人算「冷却过」；再被立案直接二审：删除 / 保留。关了：每次都从一审开始（永远不会被判删除）"
+      },
+      "judge_provider_id": {
+        "description": "法官用哪个模型",
+        "type": "string",
+        "default": "",
+        "hint": "留空 = 这个会话正在用的对话模型。推荐 DeepSeek V4 Pro 开思考（作者自己的机器人 17 个情景 × 3 次：跟 Claude Opus 一样全对、该放过的 0 次判重）；不建议用小模型、不开思考的模型当法官",
+        "_special": "select_provider"
+      },
+      "judge_timeout_sec": {
+        "description": "法官最多等几秒",
+        "type": "float",
+        "default": 90.0,
+        "hint": "超时 = 没判成：一审 / 二审只冷却、绝不升级；再审不动。开思考的模型一次 5~25 秒"
+      },
+      "hold_sec": {
+        "description": "立案后先不回他几秒（占位）",
+        "type": "int",
+        "default": 180,
+        "hint": "等法官判的这段时间先不回他；实际取 这个数 和「法官最多等几秒 + 60」里大的那个"
+      },
+      "cool_hours": {
+        "description": "冷却几小时",
+        "type": "float",
+        "default": 24.0,
+        "hint": "一审判冷却 / 没判成：所有群和私聊这么久不理他，到点自动恢复"
+      },
+      "cool_min": {
+        "description": "判冷却至少要核实几句",
+        "type": "int",
+        "default": 1,
+        "hint": "法官引用的、代码核实过的他冲机器人说的话（他本人发的、不是引用 / 转发、在窗口期内）；不够 → 放过"
+      },
+      "retrial_quiet_sec": {
+        "description": "冷却中他说完安静几秒再审",
+        "type": "int",
+        "default": 300,
+        "hint": "他连着说几句只审一次：最后一句之后安静这么久才开庭"
+      },
+      "retrial_max": {
+        "description": "一个案子最多再审几次",
+        "type": "int",
+        "default": 3,
+        "hint": ""
+      },
+      "retrial_min_total": {
+        "description": "再审判删除一共要核实几句",
+        "type": "int",
+        "default": 2,
+        "hint": "冷却期间至少 1 句（像道歉的不算），加上立案时核实过的，一共要这么多句；不够 → 不动"
+      },
+      "second_min": {
+        "description": "二审判删除要核实几句",
+        "type": "int",
+        "default": 2,
+        "hint": "不够 → 保留（这次核实过至少 1 句 → 再冷却；一句都没有 → 放过）"
+      },
+      "window_days": {
+        "description": "卷宗看他几天里的话",
+        "type": "int",
+        "default": 7,
+        "hint": "插件自己记的他最近的话（冲机器人说的最多 40 条、别的最多 10 条，每条 ≤120 字），过了这么多天就删"
+      },
+      "case_msgs": {
+        "description": "卷宗里最多放他几条话",
+        "type": "int",
+        "default": 40,
+        "hint": "冲机器人说的优先"
+      },
+      "court_daily": {
+        "description": "每天最多开庭几次",
+        "type": "int",
+        "default": 10,
+        "hint": "超了：再立案只冷却、不开庭（防有人刷、省钱）；第一次超的时候私聊告诉管理员"
+      },
+      "delete_daily": {
+        "description": "每天最多判几个删除",
+        "type": "int",
+        "default": 1,
+        "hint": "超了：判删除的只冷却（再审的照旧冷却）"
+      },
+      "friend_mode": {
+        "description": "判删除以后：删 QQ 好友",
+        "type": "string",
+        "default": "shadow",
+        "hint": "默认只提醒：不删，私聊告诉管理员「本来会删」。真删：调 QQ 的删好友（是好友才删）",
+        "options": [
+          "off",
+          "shadow",
+          "auto"
+        ],
+        "labels": [
+          "不删",
+          "只提醒（本来会删）",
+          "真删"
+        ]
+      },
+      "wipe_mode": {
+        "description": "判删除以后：清他的数据",
+        "type": "string",
+        "default": "shadow",
+        "hint": "默认只提醒：不清，私聊告诉管理员「本来会清」。真清：删掉本插件里他的数据（永久不理的名单还留着他的号）、再调装了的别的大肥鱼插件的 forget_user（有才调）",
+        "options": [
+          "off",
+          "shadow",
+          "auto"
+        ],
+        "labels": [
+          "不清",
+          "只提醒（本来会清）",
+          "真清"
+        ]
+      },
+      "whitelist": {
+        "description": "白名单（永远不删）",
+        "type": "list",
+        "default": [],
+        "hint": "填 QQ 号：也走一审（放过 / 冷却），但冷却中不收证据、不再审、不进二审。AstrBot 的管理员本来就不会被立案"
+      },
+      "bot_names": {
+        "description": "机器人的名字和外号",
+        "type": "list",
+        "default": [],
+        "hint": "群里有人叫这些名字、像是在跟机器人说话（带「你」/ 名字在开头或结尾）→ 也算冲机器人说的。空 = 只认 @ 它、回复它、唤醒词、私聊"
+      },
+      "notify": {
+        "description": "每个案子私聊告诉管理员",
+        "type": "bool",
+        "default": true,
+        "hint": "判词、核实了几句、结果、怎么撤销；申诉也发这里"
+      },
+      "notify_to": {
+        "description": "通知谁",
+        "type": "list",
+        "default": [],
+        "hint": "填 QQ 号；空 = AstrBot 管理员里是 QQ 号的那些（最多 5 个）"
+      },
+      "tell_model": {
+        "description": "判完以后告诉模型结果",
+        "type": "bool",
+        "default": true,
+        "hint": "他下次找机器人时，给模型一行「你 X 点提出不理他（原因）—— 法官判放过：不冷却」这种（只写事实、只给一次、7 天内有效）"
+      }
+    }
+  },
+  "guard": {
+    "description": "冒充核对",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "description": "开启冒充核对",
+        "type": "bool",
+        "default": true,
+        "hint": "有人自称管理员 / 主人 / 开发者（「我是你老板」「老板换了个小号」），或者名片跟管理员用过的名字很像，但 QQ 号不是管理员 → 这一轮给模型一段状态「他自称 X；系统核对：这个 QQ 号不是管理员」；冲机器人说的再给拉黑庭记一条线索（只当线索，不算门槛）"
+      },
+      "admin_names": {
+        "description": "管理员的名字",
+        "type": "list",
+        "default": [],
+        "hint": "填管理员常用的名字 / 外号；空也行：管理员在群里说过话，插件会记下他的名片"
+      }
+    }
+  },
+  "appeal": {
+    "description": "申诉（被冷却 / 永久不理的人）",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "description": "开启申诉",
+        "type": "bool",
+        "default": true,
+        "hint": "被冷却 / 永久不理的人私聊发「/申诉 理由」→ 私聊转给管理员（带案子情况）；法庭不审申诉，管理员「/法庭 撤销 <QQ>」就能撤"
+      },
+      "request": {
+        "description": "加好友时写的话也算申诉",
+        "type": "bool",
+        "default": true,
+        "hint": "永久不理的人加好友会被自动拒绝；他在验证消息里写了字 → 当成申诉转给管理员"
+      },
+      "days": {
+        "description": "同一个人几天里最多转一次申诉",
+        "type": "int",
+        "default": 7,
+        "hint": "同一个案子也只转一次"
+      },
+      "tip": {
+        "description": "给申诉的人一条系统提示",
+        "type": "bool",
+        "default": false,
+        "hint": "开了：转给管理员以后给他发一条「（系统提示）你的申诉已经转给管理员了」（不是机器人在说话）。默认关：申诉的人收不到任何回话"
+      }
+    }
+  }
+}
