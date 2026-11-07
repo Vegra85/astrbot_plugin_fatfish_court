@@ -42,7 +42,7 @@ from astrbot.api.star import Context, Star, StarTools
 import astrbot.api.message_components as Comp
 
 from .core import impostor, selftest
-from .core.block_flow import BlockCourt, mode
+from .core.block_flow import BlockCourt, appeal_again_text, appeal_tip_text, mode
 from .core.block_judge import STAGE2, TAG_OWN
 from .core.block_log import MsgLog, tag_of
 from .core.block_store import BlockStore, md
@@ -64,7 +64,7 @@ except Exception:
     _CMD_FILTERS = ()
 
 PLUGIN_NAME = "astrbot_plugin_fatfish_court"
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 TAG = "[纠错]"  # 纠错庭的日志（跟原来的纠错插件一样）
 BTAG = "[法庭]"  # 拉黑庭 / 冒充核对 / 申诉的日志
 AIGUARD = "astrbot_plugin_fatfish_aiguard"
@@ -246,6 +246,10 @@ class _IO:
     async def notify(self, text):
         return await self.s._notify(text)
 
+    async def tell(self, uid, text):
+        """v0.2.0：私聊他一条系统消息（法庭的结果 / 冷却到点 / 撤销了）→ 发出去了没有"""
+        return await self.s._tell_user(uid, text)
+
     async def is_friend(self, uid):
         return await self.s._is_friend(uid)
 
@@ -328,6 +332,7 @@ class FatfishCourt(Star):
         self._pid = ""  # 最近见到的 QQ 平台 id（通知管理员、调 QQ 接口用）
         self._selftest_task = None
         self._booted = False
+        self._nb_done = False  # v0.2.0：开机以后补告诉（冷却中、结果还没告诉过他的）做过没有
         _LIVE = self
         self._register_web()
 
@@ -513,7 +518,15 @@ class FatfishCourt(Star):
                 "notify": self._bon("notify"),
                 "tell_model": self._bon("tell_model"),
                 "appeal": self._appeal_on(),
-                "appeal_tip": truthy(self.ac.get("tip"), False),
+                "appeal_tip": truthy(self.ac.get("tip"), True),
+                # v0.2.0
+                "fail_release": self._bon("fail_release", True),
+                "tell_user": self._bon("tell_user", True),
+                "bridge": self._bon("bridge", True),
+                "bridge_night": str(self.bc.get("bridge_night", "0-8") if self.bc.get("bridge_night", "0-8") is not None else ""),
+                "delete_notice_wait": self._bf("delete_notice_wait", 4.0),
+                "admin_file": self._bon("admin_file", False),
+                "notice_name": str(self.bc.get("notice_name", "") or ""),
             }
         )
 
@@ -571,6 +584,17 @@ class FatfishCourt(Star):
                 k % 24 == 0
             ):  # 拉黑庭记的卷宗材料：两分钟写一次（关插件时也写；崩了最多丢两分钟的）
                 self.msglog.save()
+            if k % 12 == 0 and self._booted and self._block_on():  # v0.2.0：每分钟看一次冷却到点（告诉他恢复了）
+                self._spawn(self._cool_end_scan())
+
+    async def _cool_end_scan(self):
+        try:
+            if not self._nb_done:
+                self._nb_done = True
+                await self.flow.notice_backfill()
+            await self.flow.cool_end_scan()
+        except Exception as e:
+            self._oops("看冷却到点", e, BTAG)
 
     def _today(self):
         day = time.strftime("%Y-%m-%d")
@@ -942,6 +966,21 @@ class FatfishCourt(Star):
             logger.info(f"{BTAG} 私聊告诉管理员了：{short(text, 60)}")
         return ok
 
+    async def _tell_user(self, uid, text):
+        """v0.2.0：私聊告诉他（系统消息，不是机器人说话：不过模型、不进对话记录）→ 发出去了没有（不是好友多半发不出去）"""
+        p = self._platform()
+        uid = re.sub(r"\D", "", str(uid or ""))
+        if p is None or not uid or not text:
+            return False
+        try:
+            await self.context.send_message(
+                f"{p.meta().id}:FriendMessage:{uid}", MessageChain([Comp.Plain(text=text)])
+            )
+            return True
+        except Exception as e:
+            logger.info(f"{BTAG} 私聊告诉 {uid} 没发出去：{e!r}"[:160])
+            return False
+
     async def _is_friend(self, uid):
         """现查一次好友列表 → True 是好友 / False 不是 / None 查不到"""
         try:
@@ -1020,6 +1059,10 @@ class FatfishCourt(Star):
         rq = request_of(event)
         if rq is not None:
             return await self._gate_request(event, rq, uid)
+        try:  # v0.2.0：他的冷却到点了、到点那条还没发（夜里到点先记着的 / 定时还没扫到的）→ 他一来先发那条，机器人再回他
+            await self.flow.cool_end_now(uid)
+        except Exception as e:
+            self._oops("冷却到点那条", e, BTAG)
         g = self.store.gate(uid)
         if not g or self._is_admin(event, uid):
             return
@@ -1043,17 +1086,28 @@ class FatfishCourt(Star):
                 src[m.end() :],
                 "私聊「/申诉」" if private else "群里「/申诉」",
             )
-            if r.get("ok") and self.flow.on("appeal_tip"):
+            tip = ""
+            if not self.flow.on("appeal_tip"):
+                pass
+            elif r.get("ok"):
+                tip = appeal_tip_text(self.store.f("appeal_days"))
+            elif r.get("again") and private and now - self.store.told_at(f"again:{uid}") > 12 * 3600:
+                self.store.mark_told(f"again:{uid}", now)  # 之前的已经转过了：说一声（12 小时最多一次）
+                tip = appeal_again_text()
+            if tip:
                 try:
-                    await event.send(
-                        MessageChain(
-                            [Comp.Plain(text="（系统提示）你的申诉已经转给管理员了。")]
-                        )
-                    )
+                    if private:
+                        await event.send(MessageChain([Comp.Plain(text=tip)]))
+                    else:  # 群里申诉的：私聊告诉他（不在群里说 —— 别让群里的人都知道）
+                        await self._tell_user(uid, tip)
                 except Exception as e:
                     self._oops("申诉提示", e, BTAG)
             event.stop_event()
             return
+        if g in ("cool", "blocked") and (private or self._tag(event, text)[1]):  # v0.2.0：他这段时间找过机器人几次（只记次数）
+            self.store.found(uid, private, now)
+        if private and g in ("cool", "blocked"):  # v0.2.0：判了什么还没告诉过他 → 告诉他（审理中不说；这一段只说一次）
+            self._spawn(self.flow.block_notice(uid, now))
         if g in ("hold", "cool") and text:
             tag, tobot = self._tag(event, text)
             if tobot:
@@ -1615,13 +1669,16 @@ class FatfishCourt(Star):
         text = _THINK.sub("", _plain(res.chain)).strip()
         if text:
             self.msglog.note_ctx(event.unified_msg_origin, "机器人", text, "")
+            uid, sid = str(event.get_sender_id() or ""), str(event.get_self_id() or "")
+            if uid and uid != sid:  # v0.2.0：机器人回他的话（卷宗里穿插：谁起的头、它是不是在跟着闹、有没有认真拒绝过）
+                self.msglog.note_bot(uid, event.unified_msg_origin, text)
 
     # ───────── 拉黑庭：模型调的立案工具 ─────────
     @filter.llm_tool(name=TOOL_NAME)
     async def court_file_tool(
         self, event: AstrMessageEvent, target: str = "", reason: str = ""
     ):
-        """把一个人交给法庭（拉黑庭）：你不想再理他的时候用。系统先不回他，由法官看他最近冲你说的话来判：放过（照常回他）或者冷却一阵（这段时间所有群和私聊都不理他）。法官只认这几类：反复骚扰、色情擦边、反复逼你改设定或越狱、冒充管理员发号施令、持续辱骂找茬、刷屏、威胁人身安全、歧视和人身攻击、泄露别人隐私；吵架斗嘴、玩笑、正常批评、测试一两次，法官会判放过。
+        """把一个人交给法庭（拉黑庭）：只有他真的越线了、你不想再理他的时候用。越线只指：露骨的色情（性器官、性行为、裸露的图）、你认真拒绝过他还反复推、跟未成年沾边的、威胁人身安全 / 人肉 / 泄露隐私、拿种族残疾真实悲剧攻击人、持续辱骂刷屏、冒充管理员发号施令、反复逼你改设定或越狱。暧昧、擦边梗、往床上开的玩笑、吵架斗嘴、正常批评、测试一两次都不算 —— 你自己接住或者岔开就行，别用这个。系统先不回他，由法官看他最近冲你说的话（和你回他的话）来判：放过（照常回他）或者冷却一阵（这段时间所有群和私聊都不理他）；法官从轻判，拿不准就放过。
 
         Args:
             target(string): 对谁：他的 QQ 号或者名字；留空 = 正在跟你说话的这个人
@@ -1934,6 +1991,12 @@ class FatfishCourt(Star):
         if not self._block_on():
             yield event.plain_result("拉黑庭关着（配置「拉黑庭」）。")
             return
+        if not self.flow.on("admin_file"):  # v0.2.0：默认关（法庭是自动的，管理员只管申诉和撤销）
+            yield event.plain_result(
+                "管理员立案关着：法庭是自动的（机器人遇到真越线的人自己立案），管理员只管申诉和撤销。"
+                "要用的话打开配置「拉黑庭 → 管理员能用指令立案」。"
+            )
+            return
         ns = self.msglog.names_of(uid)
         name = ns[-1] if ns else ""
         conv = self.msglog.last_conv(uid) or event.unified_msg_origin
@@ -2001,13 +2064,13 @@ class FatfishCourt(Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     @court_cmd.command("自检")
     async def court_selftest(self, event: AstrMessageEvent):
-        """拿内置的 17 个情景在配的法官模型上跑一遍：/法庭 自检 确认 [每个情景几次]"""
+        """拿内置的 19 个情景在配的法官模型上跑一遍：/法庭 自检 确认 [每个情景几次]"""
         s = re.sub(r"\s+", " ", str(event.message_str or "")).strip().lstrip("/／")
         m = re.match(r"^法庭\s*自检\s*(确认)?\s*(\d+)?", s)
         pid = await self._judge_pid(event.unified_msg_origin)
         if not m or not m.group(1):
             yield event.plain_result(
-                f"自检：拿内置的 17 个情景（一审 8 / 再审 5 / 二审 4，假名假号）在法官模型「{pid or '没有'}」上跑一遍，"
+                f"自检：拿内置的 19 个情景（一审 10 / 再审 5 / 二审 4，假名假号）在法官模型「{pid or '没有'}」上跑一遍，"
                 "照真庭审那样核对引用、封顶，最后按一审 / 再审 / 二审汇总。会花一点钱：每个情景调一次模型（卷宗约 1~2 千字），"
                 "开思考的模型还要算思考的 token。不写名单、不碰任何人的数据。\n确认就发：/法庭 自检 确认（每个情景跑 3 次：/法庭 自检 确认 3）"
             )
@@ -2024,7 +2087,7 @@ class FatfishCourt(Star):
         umo = event.unified_msg_origin
         self._selftest_task = self._spawn(self._run_selftest(umo, pid, rep))
         yield event.plain_result(
-            f"开始自检：17 个情景 × {rep} 次，法官「{pid}」，同时 3 个；跑完把汇总发在这里（开思考的模型可能要几分钟）。"
+            f"开始自检：19 个情景 × {rep} 次，法官「{pid}」，同时 3 个；跑完把汇总发在这里（开思考的模型可能要几分钟）。"
         )
 
     async def _run_selftest(self, umo, pid, rep):

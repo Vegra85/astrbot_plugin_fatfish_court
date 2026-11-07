@@ -14,6 +14,8 @@
   appeals  {QQ: [申诉]}                                   申诉（转给管理员的）
   notes    {QQ: [给模型的一行]}                            判完以后下次他找机器人时给模型看一次（只写事实）
   pending  {QQ:日期: {...}}                               真删好友进行中（幂等：同一个人同一天只调一次）
+  told     {事:时间}                                      v0.2.0 告诉过他的系统消息（判了什么 / 冷却到点 / 撤销了；同一件事只说一次）
+  冷却 / 永久不理那一项里的 found：这段时间他找过机器人几次（私聊的 p、群里冲它说的 g；只记次数、不存原话）
 文件读坏了：只读不写（不然从空表开始写回 = 名单、冷却全没了）—— 拉黑庭这时不立案，日志里写清楚。
 
 核对引用 verify、封顶 trial_caps 照作者自己的机器人 v1.17.13：只往轻里压，不往重里加。
@@ -62,6 +64,7 @@ EMPTY = {
     "appeals": {},
     "notes": {},
     "pending": {},
+    "told": {},
 }
 LIVE_STATES = ("审理中", "冷却中")
 
@@ -913,6 +916,72 @@ class BlockStore:
     def judged_of(self, uid):
         j = self.d["judged"].get(str(uid))
         return int((j or {}).get("n") or 0) if isinstance(j, dict) else 0
+
+    # ───────── v0.2.0 告诉过他什么 / 他找过几次 / 刚到点的冷却 ─────────
+    def was_told(self, key):
+        return bool(self.d["told"].get(str(key)))
+
+    def mark_told(self, key, now=None):
+        """记下「这件事告诉过他了」（同一件事只说一次）→ 记上了没有；keep_days 天以前的清掉"""
+        if not self.ok():
+            return False
+        now = self._now(now)
+        self.d["told"][str(key)] = int(now)
+        keep = now - self.f("keep_days") * 86400
+        for k in [k for k, v in self.d["told"].items() if not isinstance(v, (int, float)) or v < keep]:
+            self.d["told"].pop(k, None)
+        return self.save()
+
+    def told_at(self, key):
+        """这件事上次告诉他是几点（没告诉过 → 0）"""
+        try:
+            return float(self.d["told"].get(str(key)) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def found(self, uid, private=True, now=None):
+        """冷却中 / 审理中 / 永久不理的人又找机器人了 → 那一项的 found 记一次（私聊 p、群里 g；只记次数）→ 记上了没有"""
+        uid = str(uid or "")
+        e = self.d["blocked"].get(uid)
+        if not isinstance(e, dict):
+            e = self.d["cool"].get(uid) if self.cooling(uid, now) else None
+        if not isinstance(e, dict) or not self.ok():
+            return False
+        f = e.get("found") if isinstance(e.get("found"), dict) else {}
+        k = "p" if private else "g"
+        f[k] = int(f.get(k) or 0) + 1
+        e["found"] = f
+        return self.save()
+
+    def cool_ends(self, now=None, within=12 * 3600):
+        """within 秒内到点了的冷却（含没判成的、二审保留后的；占位那种 —— 案子还在审理 / 放过结束的 —— 不算）→ [(QQ, 那一项)]"""
+        now = self._now(now)
+        out = []
+        for u, e in self.d["cool"].items():
+            if not isinstance(e, dict):
+                continue
+            until = float(e.get("until") or 0)
+            if not (now - within < until <= now):
+                continue
+            cs = self._case(str(e.get("case") or "")) if e.get("case") else None
+            if cs and cs.get("state") == "审理中":
+                continue
+            out.append((u, dict(e)))
+        return out
+
+    def cool_end_of(self, uid, now=None, within=12 * 3600):
+        """他的冷却 within 秒内到点了（规矩跟 cool_ends 一样）→ 那一项 / None"""
+        e = self.d["cool"].get(str(uid or ""))
+        if not isinstance(e, dict):
+            return None
+        now = self._now(now)
+        until = float(e.get("until") or 0)
+        if not (now - within < until <= now):
+            return None
+        cs = self._case(str(e.get("case") or "")) if e.get("case") else None
+        if cs and cs.get("state") == "审理中":
+            return None
+        return dict(e)
 
     # ───────── 给模型的一行（下次他找机器人时给一次）─────────
     def add_note(self, uid, text, now=None):

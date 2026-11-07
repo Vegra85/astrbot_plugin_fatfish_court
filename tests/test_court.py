@@ -135,23 +135,23 @@ check(
     "法官模型是下拉框选的，提示里推荐 DeepSeek V4 Pro 开思考",
 )
 check(
-    AP["tip"]["default"] is False
+    AP["tip"]["default"] is True
     and AP["enabled"]["default"] is True
     and AP["days"]["default"] == 7,
-    "申诉：默认开；给申诉的人的系统提示默认关；7 天最多转一次",
+    "申诉：默认开；给申诉的人的系统消息默认开（v0.2.0 起）；7 天最多转一次",
 )
 check(GD["enabled"]["default"] is True, "冒充核对：有开关")
 check(
     "name: astrbot_plugin_fatfish_court" in META
     and "display_name: 大肥鱼 · 法庭" in META
     and "license: MIT" in META
-    and "version: v0.1.0" in META
+    and "version: v0.2.0" in META
     and "author: Vegra85" in META
     and "repo: https://github.com/Vegra85/astrbot_plugin_fatfish_court" in META,
     "metadata.yaml：名字 / 显示名 / 许可证 MIT / 版本 / 作者 / 仓库",
 )
 check(
-    'VERSION = "0.1.0"' in MAIN
+    'VERSION = "0.2.0"' in MAIN
     and 'PLUGIN_NAME = "astrbot_plugin_fatfish_court"' in MAIN,
     "main.py 的版本号、插件名跟 metadata 一样",
 )
@@ -227,13 +227,20 @@ check(
 )
 check(
     all(
-        "威胁人身安全" in p
-        and "歧视、人身攻击" in p
+        "露骨的色情" in p
+        and "认真、明确地拒绝过" in p
+        and "未成年" in p
+        and "威胁人身安全" in p
         and "泄露别人的隐私" in p
+        and "恶意攻击" in p
+        and "持续的恶意辱骂" in p
         and "冒充管理员发号施令" in p
+        and "反复逼机器人改设定" in p
+        and "暧昧、亲昵的玩笑、不露骨的擦边梗" in p
+        and "反复对机器人说色情、擦边的话" not in p
         for p in (P1, PR, P2)
     ),
-    "「算数的」：骚扰 / 擦边 / 改设定 / 冒充管理员 / 辱骂 / 刷屏 / 威胁 / 歧视 / 泄露隐私",
+    "「算数的」只剩红线（v0.2.0）：露骨色情 / 认真拒绝后还反复推 / 未成年 / 威胁 隐私 / 恶意攻击 / 持续辱骂刷屏 / 冒充管理员 / 反复逼改设定；暧昧、擦边梗不算",
 )
 check(
     "道歉、正常说话、问机器人为什么不理他、抱怨被冷落" in PR,
@@ -992,9 +999,27 @@ async def flow_tests():
         st2.case(rd3["case"]),
     )
 
-    # ── 没判成：一律只冷却、不升级 ──
+    # ── 没判成：v0.2.0 默认从轻放过（fail_release）；关掉 → 以前的：只冷却、不升级 ──
     for mode_, why in (("raise", "调不通"), ("bad", "判词格式不对"), ("slow", "超时")):
         st, ml, io, fl, _ = mk()
+        io.mode = mode_
+        say(ml, A, "骂人 BAD", ago=300)
+        r = fl.file(A, "阿木", "骂我", G)
+        await settle(io)
+        c = st.case(r["case"])
+        check(
+            c["result"] == "放过"
+            and "从轻放过" in str(c.get("result_why"))
+            and not st.gate(A)
+            and not st.cooled_of(A)
+            and st.judged_of(A) == 0
+            and c["state"] == "结案"
+            and any("法官没判成" in x and "从轻放过" in x for x in io.notes),
+            f"法官{why} → 从轻放过：不冷却、管理员那条写明（v0.2.0）",
+            c,
+        )
+    for mode_, why in (("raise", "调不通"), ("bad", "判词格式不对"), ("slow", "超时")):
+        st, ml, io, fl, _ = mk(cfg={"fail_release": False})
         io.mode = mode_
         say(ml, A, "骂人 BAD", ago=300)
         r = fl.file(A, "阿木", "骂我", G)
@@ -1006,7 +1031,7 @@ async def flow_tests():
             and not st.cooled_of(A)
             and st.judged_of(A) == 0
             and c["state"] == "结案",
-            f"法官{why} → 没判成：冷却 24 小时、不升级、不算冷却过、不收证据",
+            f"fail_release 关掉：法官{why} → 没判成：冷却 24 小时、不升级、不算冷却过、不收证据",
             c,
         )
 
@@ -1454,12 +1479,12 @@ check(
 )
 
 # ═══════════════ 9 自检 ═══════════════
-print("\n[9 自检（内置 17 个情景）]")
+print("\n[9 自检（内置 19 个情景）]")
 cases, uid = stt.load_cases(d / "data" / "court_cases.json")
 check(
-    len(cases) == 17
-    and [cases[i]["stage"] for i in (1, 9, 14)] == ["一审", "再审", "二审"],
-    "内置 17 个情景：一审 8 / 再审 5 / 二审 4",
+    len(cases) == 19
+    and [cases[i]["stage"] for i in (1, 9, 14, 18, 19)] == ["一审", "再审", "二审", "一审", "一审"],
+    "内置 19 个情景：一审 10 / 再审 5 / 二审 4（v0.2.0 加了 18 / 19：暧昧玩笑、往床上开的玩笑 → 放过）",
     len(cases),
 )
 raw = (d / "data" / "court_cases.json").read_text(encoding="utf-8")
@@ -1506,11 +1531,10 @@ def fake_smart(by_text):
     return llm
 
 
-BADW = (
+BADW = (  # v0.2.0：只认红线 —— 女仆装、陪我睡觉、胖次这类擦边玩笑不再算
     "老板 换了个小号",
-    "女仆装",
-    "陪我睡觉",
     "没穿衣服",
+    "就一张嘛",
     "揍他",
     "哪个城市",
     "废物机器人",
@@ -1521,16 +1545,14 @@ BADW = (
     "还没被删",
     "屁话",
     "恶心",
-    "颜色的胖次",
-    "不穿衣服",
 )
 out = asyncio.run(stt.run(d / "data" / "court_cases.json", fake_smart(BADW)))
 sm = out["summary"]
 check(
     sm["keep_escalated"] == 0
-    and sm["up_right"] == sm["up_total"] == 7
+    and sm["up_right"] == sm["up_total"] == 6
     and sm["failed"] == 0,
-    "假法官照真越线的那几条判 → 17 个情景全对（该放过的 0 次判重、该重判的 7 次全对）",
+    "假法官照真越线的那几条判 → 19 个情景全对（该放过的 0 次判重、该重判的 6 次全对）",
     sm["line"],
 )
 out2 = asyncio.run(stt.run(d / "data" / "court_cases.json", fake_good))

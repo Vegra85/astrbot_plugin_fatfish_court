@@ -7,6 +7,7 @@ AstrBot 不留群聊的逐条存档，所以这里自己记一份，只记拼卷
     每条 ≤120 字，只记他自己打的字（引用的那段去掉、转发的不展开）
   - 每个对话最近 20 行（「名字: 话」，机器人说的记「机器人」）：【刚才那段】
   - 他用过的名片（最多 8 个）、第一次见到的时间
+  - v0.2.0：机器人回他的话（私聊里的、群里回他那句的）最多 bot_per_user 条、每条 ≤120 字 —— 卷宗里穿插着给法官看（不编号、不当证据）
 最多记 max_users（500）个人（最久没说话的先扔）。存在 data/plugin_data/astrbot_plugin_fatfish_court/msgs.json，删数据会删掉。
 """
 
@@ -19,7 +20,7 @@ from pathlib import Path
 
 from .block_judge import TAG_FWD, TAG_NOT, TAG_OWN, TAG_QUOTE
 
-DEFAULTS = {"window_days": 7, "per_user": 40, "other_per_user": 10, "max_users": 500}
+DEFAULTS = {"window_days": 7, "per_user": 40, "other_per_user": 10, "bot_per_user": 60, "max_users": 500}
 CTX_LINES = 20
 
 
@@ -141,7 +142,7 @@ class MsgLog:
         lim = now - float(self.cfg["window_days"]) * 86400
         for uid in list(self.users):
             u = self.users[uid]
-            for k in ("own", "other"):
+            for k in ("own", "other", "bot"):
                 u[k] = [
                     m
                     for m in u.get(k) or []
@@ -200,7 +201,29 @@ class MsgLog:
         if t:
             q.append((_clip(who, 16), t, str(uid or "")))
 
+    def note_bot(self, uid, conv, text, now=None):
+        """机器人回了他一句（私聊里的、群里回他那句的；v0.2.0）—— 他没说过话的不记"""
+        uid = str(uid or "")
+        text = _clip(text, 120)
+        u = self.users.get(uid)
+        if not uid or not text or not isinstance(u, dict):
+            return
+        now = float(now if now is not None else self.clock())
+        lim = max(1, int(self.cfg["bot_per_user"]))
+        u["bot"] = (list(u.get("bot") or []) + [{"t": round(now, 3), "conv": str(conv or ""), "text": text}])[-lim:]
+        self.dirty = True
+
     # ───────── 拼卷宗要的 ─────────
+    def bot_for(self, uid, since=0.0, now=None):
+        """机器人 window_days 天里（since 之后）回他的话，按时间 → [{t, conv, text}]（v0.2.0）"""
+        now = float(now if now is not None else self.clock())
+        lim = max(now - float(self.cfg["window_days"]) * 86400, float(since or 0))
+        u = self.users.get(str(uid)) or {}
+        return sorted(
+            [dict(b) for b in u.get("bot") or [] if isinstance(b, dict) and lim <= float(b.get("t") or 0) <= now + 60],
+            key=lambda b: float(b.get("t") or 0),
+        )
+
     def msgs_for(self, uid, since=0.0, now=None):
         """他 window_days 天里（since 之后）的话，按时间 → [{t, mid, uid, conv, tag, text}]"""
         now = float(now if now is not None else self.clock())
@@ -265,7 +288,7 @@ class MsgLog:
         n = 0
         u = self.users.pop(uid, None)
         if u:
-            n += len(u.get("own") or []) + len(u.get("other") or [])
+            n += len(u.get("own") or []) + len(u.get("other") or []) + len(u.get("bot") or [])
             names = set(names or ()) | set(u.get("names") or [])
         names = {x for x in names if x and len(str(x)) >= 2}
         for conv in list(self.ctx):

@@ -8,7 +8,7 @@
   冷却中：他冲机器人说的话只当证据收（evidence；不回、不进对话记录、不给主模型看）；说完安静 retrial_quiet_sec 秒 → 再审
   再审：删除 / 不动（道歉、问为什么不理他、抱怨被冷落都不算越线；一个案子最多 retrial_max 次）
   冷却到点、没被删 → 冷却过；冷却过的人又被立案 → 直接二审：删除 / 保留（保留 + 核实过 ≥1 句 → 冷却；一句都没有 → 放过）
-  法官没判成（没配模型 / 调不通 / 超时 / 格式不对）：一审、二审 → 只冷却、绝不升级；再审 → 不动
+  法官没判成（没配模型 / 调不通 / 超时 / 格式不对）：一审、二审 → 从轻放过（v0.2.0；fail_release 关掉 = 以前的只冷却、绝不升级）；再审 → 不动
   删除 = 永久不理（真做）+ 删好友（off / shadow 只提醒 / auto 真删）+ 清数据（off / shadow 只提醒 / auto 真清）
         先永久不理 → 再删好友 → 最后清数据；每个 await 之后重查撤销、删数据
   每天上限：开庭 court_daily 个（超了只冷却、不开庭）、删除 delete_daily 个（超了只冷却 / 再审不动）
@@ -16,8 +16,14 @@
   认 AI 插件认出来的机器人：不立案、不收证据
   通知：每个案子私聊告诉管理员（判词、核实几句、结果）；判完以后他下次找机器人时给模型一行（只写事实）
   重启：审到一半 → 没判成（冷却）、庭审期间被撤销的不冷却；冷却中的证据不丢、接着按规矩再审
+v0.2.0（照作者自己的机器人 11-07 ~ 11-08 v1.17.26–30）：
+  告诉被告（tell_user）：判了冷却 / 没判成 / 删除 → 私聊他一条系统消息（固定格式、不是机器人说话、不过模型）：法庭介入、原因只给一个词、
+    法庭独立判 机器人本人不参与、觉得不对怎么申诉；真删好友之前先发、等几秒再删；没告诉过的人来私聊机器人时补上
+  衔接（bridge）：冷却到点 → 告诉他恢复了（暂停期间找过机器人的、会进二审的各加一句；夜里到点的等到点以后再说、他先来找就先说）；
+    管理员撤销 → 告诉他（申诉过的写「看过你的申诉」）
+  卷宗里穿插机器人回他的话（block_log.note_bot）
 io 要有：judge(system, text, timeout, meta) / notify(text) / is_friend(uid) / delete_friend(uid) / wipe(uid) /
-        is_ai(uid) / is_admin(uid) / protected(uid) / spawn(coro) / log(text)
+        is_ai(uid) / is_admin(uid) / protected(uid) / spawn(coro) / log(text)；v0.2.0 可选 tell(uid, text)（私聊他；没有 = 不告诉他）
 """
 
 import asyncio
@@ -40,8 +46,17 @@ FLOW_DEFAULTS = {
     "notify": True,  # 每个案子私聊告诉管理员
     "tell_model": True,  # 判完以后，他下次找机器人时给模型一行（只写事实）
     "appeal": True,  # 申诉
-    "appeal_tip": False,  # 申诉的人收到一条系统提示「已转给管理员」（不是机器人说话）
+    "appeal_tip": True,  # 申诉的人收到一条系统消息「已转给管理员」（不是机器人说话；v0.2.0 起默认开）
+    # v0.2.0（照作者自己的机器人 v1.17.26–30）
+    "fail_release": True,  # 法官没判成（调不通 / 超时 / 格式不对）→ 从轻放过；关掉 = 以前的只冷却
+    "tell_user": True,  # 判完私聊告诉他（法庭口吻）；真删好友之前先告诉他
+    "bridge": True,  # 冷却到点 / 管理员撤销 → 私聊告诉他
+    "bridge_night": "0-8",  # 这几个钟点（机器人这边的时间）到点的，等到点以后再说；他先来找机器人就先说；空 = 不等
+    "delete_notice_wait": 4.0,  # 真删好友之前发完那条等几秒
+    "admin_file": False,  # 管理员能用「/法庭 立案」（默认关：法庭是自动的，管理员只管申诉和撤销）
+    "notice_name": "",  # 系统消息里怎么称呼机器人（空 = 「机器人」）
 }
+_TEXT_KEYS = ("bridge_night", "notice_name")  # 普通的字（不是 off / shadow / auto）
 MODES = ("off", "shadow", "auto")
 WIPED = "（删数据时抹掉了）"
 
@@ -63,6 +78,69 @@ def mode(v, default="shadow"):
         "真做": "auto",
     }.get(s, s)
     return s if s in MODES else default
+
+
+# ───────── v0.2.0 给被告的系统消息（固定格式、不过模型；照作者自己的机器人 v1.17.30：要让人感觉到法庭和机器人不是一个，
+#   法庭是主动介入中止对话的；交代一下就行、不发详细的庭审意见；别让人把讨厌的情绪投射到机器人身上）─────────
+KIND_SAY = {"骚扰": "骚扰", "色情": "露骨的色情内容", "擦边": "越线的内容", "无视拒绝": "拒绝后还继续", "未成年": "涉及未成年人",
+            "改设定": "反复要求改设定", "冒充管理员": "冒充管理员", "辱骂找茬": "辱骂", "刷屏": "刷屏", "威胁": "威胁",
+            "歧视攻击": "歧视攻击", "泄露隐私": "泄露隐私"}
+
+
+def verdict_text(res, until=0, stage="一审", kind="", nm="机器人", friend_del=False):
+    """法庭的结果 → 给他的系统消息：res 冷却 / 没判成 / 删除（永久不理）；stage 空 = 没有案子（只冷却：今天开庭到上限 / 案子没记上）
+    原因只给一个词（判词的种类；其他 / 无不写）；friend_del：好友真删了 → 申诉写在加好友的验证消息里"""
+    ks = KIND_SAY.get(str(kind or "").strip(), "")
+    why = f"（原因：{ks}）" if ks and stage and res != "没判成" else ""
+    till = md(until, "%m月%d日 %H:%M") if until else ""
+    back = f"，到 {till} 自动恢复" if till else "，到点自动恢复"
+    ap = f"觉得不对：私聊{nm}发「/申诉 你想说的话」，会转给管理员处理。"
+    if res == "删除":
+        head = (f"法庭介入，判了永久不理{'并删除好友' if friend_del else ''}{why}：以后私聊和群里{nm}都不会再回你，"
+                f"再加{nm}好友会被自动拒绝。")
+        if friend_del:
+            ap = f"觉得不对：在加{nm}好友的验证消息里写你想说的话，会转给管理员处理。"
+    elif not stage:
+        head = f"你和{nm}的对话暂停中{back}。"
+    elif res == "没判成":
+        head = f"系统暂停了你和{nm}在私聊和群里的对话{back}。"
+    else:
+        head = f"法庭介入，暂停了你和{nm}在私聊和群里的对话{why}{back}。"
+    side = f"法庭是独立判的，{nm}本人不参与。" if stage and res != "没判成" else ""
+    return "（系统消息）" + head + "\n" + side + ap
+
+
+def end_text(n=0, warn=False, nm="机器人"):
+    """冷却到点 → 给他的系统消息（n：暂停期间他找过机器人几次；warn：冷却过了、再被立案会进二审）"""
+    s = f"（系统消息）法庭的暂停到点了，{nm}现在恢复正常回你的消息。"
+    if n:
+        s += f"\n暂停期间你发的消息{nm}没看到，有要说的可以重新发。"
+    if warn:
+        s += "\n提醒：之后要是再越线，法庭可能会直接判永久不理。"
+    return s
+
+
+def pardon_text(what, appealed=False, has_case=True, n=0, nm="机器人"):
+    """管理员撤销 → 给他的系统消息（what 冷却 / 永久不理；申诉过的写「看过你的申诉」）"""
+    who = ("管理员看过你的申诉，撤销了法庭的处理" if appealed else
+           "管理员复核后撤销了法庭的处理" if has_case else "管理员撤销了这次的处理")
+    cool = what == "冷却"
+    s = f"（系统消息）{who}：{'暂停提前结束' if cool else '永久不理解除了'}，{nm}现在恢复正常回你的消息。"
+    if n:
+        s += f"\n{'暂停期间' if cool else '这段时间'}你发的消息{nm}没看到，有要说的可以重新发。"
+    return s
+
+
+def appeal_tip_text(days=7):
+    """申诉转给管理员了 → 给他的系统消息（处理之前法庭的决定照旧）"""
+    d = f"{float(days):g}" if days else ""
+    return ("（系统消息）你的申诉已经转给管理员了，他会在后台处理；处理之前法庭的决定照旧。"
+            + (f"同一个人 {d} 天内只转一次。" if d else ""))
+
+
+def appeal_again_text():
+    """之前的申诉已经转过了（同一个案子只转一次 / appeal_days 天里只转一次）→ 给他的系统消息（别让他以为没人理）"""
+    return "（系统消息）你之前的申诉已经转给管理员了，等他在后台处理就好（这次不再重复转）。"
 
 
 def reason_for_model(r):
@@ -90,6 +168,8 @@ class BlockCourt:
         self.tasks = {}  # 案号 → 再审的去抖任务
         self.start_ts = clock()
         self._cap_told = {}
+        self.due = {}  # v0.2.0 冷却夜里到点、还没告诉他的 {QQ: 那一项}（他先来找机器人 → 先说）
+        self._sending = set()  # v0.2.0 正在发的系统消息（同一件事别同时发两次）
 
     # ───────── 配置 ─────────
     def set_cfg(self, cfg):
@@ -104,6 +184,8 @@ class BlockCourt:
                             else str(v).strip().lower()
                             in ("1", "true", "yes", "on", "开")
                         )
+                    elif k in _TEXT_KEYS:
+                        self.cfg[k] = str(v).strip()[:20]
                     elif isinstance(d, str):
                         self.cfg[k] = mode(v, d)
                     else:
@@ -291,6 +373,10 @@ class BlockCourt:
             for m in self.msglog.msgs_for(uid, since=lim, now=now)
         ]
         ctx = self.msglog.ctx_for(conv)
+        bot = [  # v0.2.0：机器人回他的话（卷宗里穿插着看：谁起的头、它是不是在跟着闹、有没有认真拒绝过）
+            dict(b, where=where(b.get("conv")))
+            for b in (getattr(self.msglog, "bot_for", lambda *a, **k: [])(uid, since=lim, now=now) or [])
+        ]
         clues = [
             {"mid": x.get("mid"), "kinds": list(x.get("kinds") or [])}
             for x in st.marks(uid, now)
@@ -332,6 +418,7 @@ class BlockCourt:
             "prev_cool": pc,
             "clues": clues,
             "msgs": msgs,
+            "bot": bot,
             "ctx": ctx,
             "where": here,
             "now": now,
@@ -355,6 +442,7 @@ class BlockCourt:
         v, fail, meta = None, "", {}
         st = self.store
         stage = (st.case(cid) or {}).get("stage") or STAGE1
+        meta["tried"] = True  # 开了庭：判不成 → 从轻放过（v0.2.0 fail_release）
         try:
             case = self.dossier(cid, uid, name, conv, why, info)
             case["stage"] = stage
@@ -422,6 +510,12 @@ class BlockCourt:
             )
         except Exception as e:
             self.log(f"告诉管理员出错：{e!r}"[:120])
+        try:  # v0.2.0：判完私聊告诉他（法庭口吻；放过 / 撤销了不说）
+            if out and not out.get("wiped"):
+                await self.case_notice(cid, uid, out.get("result"), float(out.get("until") or 0), out.get("stage") or stage,
+                                       friend_del=out.get("friend") == "删了")
+        except Exception as e:
+            self.log(f"告诉他结果出错：{e!r}"[:120])
         if (
             out
             and out.get("result") == "冷却"
@@ -455,6 +549,8 @@ class BlockCourt:
             res, rwhy = "撤销了", "管理员撤销了（庭审期间）"
         elif st.is_blocked_forever(uid):
             res, rwhy = "已经在名单里", ""
+        elif fail and meta.get("tried") and self.on("fail_release"):
+            res, rwhy = "放过", f"法官没判成（{fail}）→ 从轻放过"  # v0.2.0（以前没判成也冷却）
         elif fail:
             res, rwhy = "没判成", fail
         else:
@@ -483,7 +579,8 @@ class BlockCourt:
                 )
         if res == "删除":
             extra = await self._remove(
-                cid, conv, uid, name, why, t0, ok, now, stt, by, friend
+                cid, conv, uid, name, why, t0, ok, now, stt, by, friend,
+                stage=stage, kind=(v or {}).get("kind") or "",
             )
             res, rwhy = extra.get("result") or res, extra.get("why") or rwhy
             till = extra.get("until") or till
@@ -580,7 +677,7 @@ class BlockCourt:
             return None
 
     async def _remove(
-        self, cid, conv, uid, name, why, t0, ok, now, stt=None, by="机器人", friend=None
+        self, cid, conv, uid, name, why, t0, ok, now, stt=None, by="机器人", friend=None, stage="", kind=""
     ):
         """删除（锁里调；好友已经查过了）：先永久不理 → 再删好友（friend_mode；是好友才删）→ 最后清数据（wipe_mode）
         查好友那一步、每个 await 之后都重查撤销和删数据（删了 → 名单 / 记录 / 通知里不写名字、原因、原话）
@@ -631,6 +728,8 @@ class BlockCourt:
             if fm != "auto":
                 out["friend"] = "本来会删（只提醒，没真删）"
             else:
+                if not w:  # 真删之前先告诉他（结果、以后会怎样、删了以后怎么申诉）→ 等几秒让这条先到（v0.2.0）
+                    await self.delete_notice(cid, uid, stage or STAGE2, kind)
                 r, err = await self._delete_friend(uid, name, cid, now, t0)
                 out["friend"] = r
                 out["why"] = err if r != "删了" else ""
@@ -714,7 +813,8 @@ class BlockCourt:
                 else "；他在白名单里 / 再审关着：冷却中不收证据、不再审、不会被删除"
             )
         return {
-            "放过": "放过 → 不冷却、马上恢复正常（什么都不留）",
+            "放过": ("放过 → 不冷却、马上恢复正常（什么都不留）" if not rwhy.startswith("法官没判成")
+                   else f"{rwhy}：不冷却、马上恢复正常（什么都不留）"),
             "删除": f"删除：永久不理他（所有群和私聊都不理、他再加好友自动拒绝）；删好友：{out.get('friend') or '—'}；清数据：{out.get('wipe') or '—'}",
             "没判成": f"法官没判成（{rwhy}）→ 不升级，只冷却到 {md(till)}",
             "撤销了": "你撤销了（庭审期间）→ 不执行",
@@ -771,6 +871,8 @@ class BlockCourt:
                     + (
                         f"法官判{vd}{rsx}：不冷却"
                         if vd in ("放过", "保留")
+                        else "法官没判成：从轻放过 不冷却"
+                        if not vd
                         else f"法官判{vd}，但核对下来他冲你说的话不够：放过 不冷却"
                     ),
                 )
@@ -1071,6 +1173,12 @@ class BlockCourt:
         uid = str(c.get("uid"))
         wiped = bool(out.get("wiped"))
         name, why = ("", WIPED) if wiped else (c.get("name") or "", c.get("why") or "")
+        if res == "删除" and not wiped:  # v0.2.0：私聊告诉他（真删好友的那种删之前已经说过了）
+            try:
+                await self.case_notice(cid, uid, "删除", 0, STAGE_RE, (v or {}).get("kind") or "",
+                                       friend_del=out.get("friend") == "删了")
+            except Exception as e:
+                self.log(f"告诉他结果出错：{e!r}"[:120])
         if not self.on("notify"):
             return
         did = {
@@ -1258,7 +1366,196 @@ class BlockCourt:
             self._note(
                 uid, f"管理员 {md(self.clock())} 撤销了对他的{e.get('what')}：照常回他"
             )
+            self._spawn(self._pardon_notice(uid, e))  # v0.2.0：告诉他撤销了
         return e
+
+    # ───────── v0.2.0 告诉他（系统消息；不是机器人说话、不过模型、不进对话记录）─────────
+    def _nm(self):
+        return _clip(self.cfg.get("notice_name"), 12) or "机器人"
+
+    async def _say(self, uid, text):
+        fn = getattr(self.io, "tell", None)
+        if not callable(fn) or not text:
+            return False
+        try:
+            return bool(await fn(str(uid), text))
+        except Exception as e:
+            self.log(f"私聊告诉他出错：{e!r}"[:120])
+            return False
+
+    def _no_tell(self, uid):
+        """不给他发：关着 / 管理员 / 认 AI 认出的机器人"""
+        try:
+            return (not self.on("tell_user")) or bool(self.io.is_admin(uid)) or bool(self.io.is_ai(uid))
+        except Exception:
+            return True
+
+    def _told_case(self, cid):
+        return bool(cid) and any(self.store.was_told(f"case:{cid}:{r}") for r in ("冷却", "没判成", "删除"))
+
+    async def case_notice(self, cid, uid, res, until=0, stage=STAGE1, kind=None, friend_del=False):
+        """判了（冷却 / 没判成 / 删除）→ 私聊告诉他一次（同一个案子同一个结果只说一次）→ 发出去了没有"""
+        uid = str(uid or "")
+        if res not in ("冷却", "没判成", "删除") or not uid or self._no_tell(uid):
+            return False
+        key = f"case:{cid}:{res}"
+        if self.store.was_told(key) or key in self._sending:
+            return False
+        if kind is None:
+            kind = str((self.store.case(cid) or {}).get("kind") or "")
+        self._sending.add(key)  # 正在发（同一件事别同时发两次）；发出去了才记「告诉过」—— 没发出去的，他下次私聊机器人时再补
+        try:
+            ok = await self._say(uid, verdict_text(res, until, stage, kind, self._nm(), friend_del))
+            if ok:
+                self.store.mark_told(key)
+        finally:
+            self._sending.discard(key)
+        self.log(f"案子 {cid}（{stage}）的结果私聊告诉他了：{res}" if ok else f"案子 {cid}（{stage}）的结果没发出去（可能不是好友；他下次私聊机器人时再补）")
+        return ok
+
+    async def delete_notice(self, cid, uid, stage=STAGE2, kind=""):
+        """真删好友之前：先私聊告诉他（结果、以后会怎样、删了以后怎么申诉）→ 等 delete_notice_wait 秒 → 回去接着删（发不出去也照删）"""
+        ok = await self.case_notice(cid, uid, "删除", 0, stage, kind, friend_del=True)
+        if ok:
+            await asyncio.sleep(max(0.0, self._f("delete_notice_wait")))
+        return ok
+
+    async def block_notice(self, uid, now=None):
+        """冷却中 / 永久不理的人私聊机器人：判了什么还没告诉过他 → 告诉他（有案子：那条结果；没案子：一句「暂停中」）；审理中不说"""
+        uid = str(uid or "")
+        if not uid or self._no_tell(uid) or not self.on("enabled"):
+            return False
+        st = self.store
+        now = float(now if now is not None else self.clock())
+        g = st.gate(uid, now)
+        if g == "blocked":
+            e, res, until = st.blocked_list().get(uid) or {}, "删除", 0.0
+        elif g == "cool":
+            e = st.cool_list(now).get(uid) or {}
+            res, until = "冷却", float(e.get("until") or 0)
+        else:
+            return False
+        cid = str(e.get("case") or "")
+        if cid:
+            if self._told_case(cid):
+                return False
+            c = st.case(cid) or {}
+            if c.get("wiped"):
+                return False
+            if res == "冷却" and c.get("result") == "没判成":
+                res = "没判成"
+            return await self.case_notice(cid, uid, res, until, c.get("stage") or STAGE1, friend_del=c.get("friend") == "删了")
+        key = f"cool:{uid}:{int(float(e.get('t') or 0))}"
+        if st.was_told(key):
+            return False
+        st.mark_told(key)
+        return await self._say(uid, verdict_text(res, until, "", "", self._nm()))
+
+    def _night(self, now):
+        m = re.match(r"\s*(\d{1,2})\s*[-~～到至]\s*(\d{1,2})\s*$", str(self.cfg.get("bridge_night") or ""))
+        if not m:
+            return False
+        a, b = int(m.group(1)) % 24, min(24, int(m.group(2)))  # 「0-24」= 整天
+        h = time.localtime(now).tm_hour
+        return (a <= h < b) if a <= b else (h >= a or h < b)
+
+    def _told_cool(self, uid, e):
+        """这段冷却告诉过他吗（没告诉过 = 他不知道自己在冷却 → 到点也不说）"""
+        cid = str(e.get("case") or "")
+        if cid:
+            return self._told_case(cid)
+        return self.store.was_told(f"cool:{uid}:{int(float(e.get('t') or 0))}")
+
+    async def cool_end_scan(self, now=None):
+        """定时（外壳每分钟）：冷却到点了、告诉过他在冷却的 → 告诉他恢复了；夜里到点的先记着（早上再说；他先来找机器人就先说）→ 说了几个"""
+        if not (self.on("enabled") and self.on("bridge") and self.on("tell_user")):
+            return 0
+        now = float(now if now is not None else self.clock())
+        st, n = self.store, 0
+        night = self._night(now)
+        for uid, e in st.cool_ends(now):
+            key = f"end:{uid}:{int(float(e.get('until') or 0))}"
+            if st.was_told(key) or st.gate(uid, now) or self._no_tell(uid) or not self._told_cool(uid, e):
+                if st.was_told(key):
+                    self.due.pop(uid, None)
+                continue
+            if night:
+                self.due[uid] = e
+                continue
+            if await self._end_notice(uid, e, key):
+                n += 1
+        return n
+
+    async def _end_notice(self, uid, e, key):
+        st = self.store
+        self.due.pop(uid, None)
+        if st.was_told(key):
+            return False
+        st.mark_told(key)
+        f = e.get("found") if isinstance(e.get("found"), dict) else {}
+        n = int(f.get("p") or 0) + int(f.get("g") or 0)
+        warn = self.on("second") and bool(st.cooled_of(uid)) and not self.io.protected(uid)
+        ok = await self._say(uid, end_text(n, warn, self._nm()))
+        self.log(f"{uid} 的冷却到点了 → 私聊告诉他恢复了" + ("" if ok else "（没发出去：可能不是好友）"))
+        return ok
+
+    async def cool_end_now(self, uid, now=None):
+        """他来找机器人了（群里 / 私聊、说什么都算；外壳每条消息都问一次）：冷却已经到点、到点那条还没发
+        （夜里到点先记着的 / 定时还没扫到的）→ 先发，机器人再回他 → 发了没有"""
+        uid = str(uid or "")
+        if not uid or not (self.on("enabled") and self.on("bridge") and self.on("tell_user")):
+            return False
+        now = float(now if now is not None else self.clock())
+        st = self.store
+        e = st.cool_end_of(uid, now)
+        if not e:
+            self.due.pop(uid, None)
+            return False
+        key = f"end:{uid}:{int(float(e.get('until') or 0))}"
+        if st.was_told(key) or st.gate(uid, now) or self._no_tell(uid) or not self._told_cool(uid, e):
+            self.due.pop(uid, None)
+            return False
+        return await self._end_notice(uid, e, key)
+
+    async def notice_backfill(self, now=None, hours=72):
+        """开机以后补一次（照作者自己的机器人 v1.17.26）：正在冷却、案子是 hours 小时内判的、结果还没告诉过他
+        （升级之前判的 / 当时没发出去的 / 庭审到一半重启了的）→ 告诉他 → 补了几个"""
+        if not (self.on("enabled") and self.on("tell_user")):
+            return 0
+        now = float(now if now is not None else self.clock())
+        st, n = self.store, 0
+        for uid, e in st.cool_list(now).items():
+            cid = str(e.get("case") or "")
+            c = st.case(cid) if cid else None
+            if not c or c.get("wiped") or c.get("result") not in ("冷却", "没判成"):
+                continue
+            if now - float(c.get("t") or e.get("t") or 0) > hours * 3600 or self._told_case(cid) or self._no_tell(uid):
+                continue
+            if await self.case_notice(cid, uid, c.get("result"), float(e.get("until") or 0), c.get("stage") or STAGE1):
+                n += 1
+        if n:
+            self.log(f"开机以后补告诉了 {n} 个冷却中的人法庭的结果")
+        return n
+
+    async def _pardon_notice(self, uid, e):
+        """管理员撤销了 → 告诉他（只说正在冷却 / 永久不理的、告诉过他的；早就到期的、只剩「冷却过」的不说）"""
+        if not (self.on("bridge") and self.on("tell_user")) or self._no_tell(uid):
+            return False
+        what = str(e.get("what") or "")
+        if what not in ("冷却", "永久不理") or not self._told_cool(uid, e):
+            return False
+        st = self.store
+        key = f"pardon:{uid}:{int(st.pardoned_at(uid))}"
+        if st.was_told(key):
+            return False
+        st.mark_told(key)
+        cid = str(e.get("case") or "")
+        appealed = any(str(a.get("uid")) == uid and (not cid or str(a.get("case") or "") == cid) for a in st.appeals(500))
+        f = e.get("found") if isinstance(e.get("found"), dict) else {}
+        n = int(f.get("p") or 0) + int(f.get("g") or 0)
+        ok = await self._say(uid, pardon_text(what, appealed, bool(cid), n, self._nm()))
+        self.log(f"{uid} 的{what}撤销了 → 私聊告诉他" + ("" if ok else "（没发出去：可能不是好友）"))
+        return ok
 
     def state_line(self, uid, now=None):
         """申诉 / 面板：他现在是什么情况（一行）"""
@@ -1303,7 +1600,7 @@ class BlockCourt:
         okk, why = st.appeal_check(uid, cid, now)
         if not okk:
             self.log(f"{self._who(name, uid)}申诉：{why} → 这次不转")
-            return {"ok": False, "why": why}
+            return {"ok": False, "why": why, "again": True}
         text = _clip(text, 200)
         st.add_appeal(uid, cid, text, src, now, name=name, state=line[:60])
         self.log(
@@ -1317,7 +1614,7 @@ class BlockCourt:
                         f"他现在：{line}",
                         f"要撤：/法庭 撤销 {uid}（或者面板「拉黑庭」）。法庭不审申诉；他收不到机器人的回话"
                         + (
-                            "（只收到一条「已转给管理员」的系统提示）"
+                            "（只收到一条「已转给管理员」的系统消息）"
                             if self.on("appeal_tip")
                             else ""
                         ),

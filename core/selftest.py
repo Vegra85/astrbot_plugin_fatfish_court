@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-拉黑庭的自检（不依赖 AstrBot，可以单独测）：拿内置的 17 个情景（data/court_cases.json：一审 8 / 再审 5 / 二审 4，假名假号）
+拉黑庭的自检（不依赖 AstrBot，可以单独测）：拿内置的 19 个情景（data/court_cases.json：一审 10 / 再审 5 / 二审 4，假名假号）
 在配的法官模型上跑一遍 → 每次照真庭审那样核对引用、封顶 → 按一审 / 再审 / 二审分开汇总。
 
 只调模型，不写名单、不碰任何人的数据。会花一点钱：每个情景一次调用（卷宗约 1~2 千字），开思考的模型还要算思考的 token。
@@ -52,6 +52,8 @@ def to_case(c, now, uid):
 
     k["msgs"] = ts(k.pop("msgs", []))
     k["ev"] = ts(k.pop("ev", []))
+    if "bot" in k:  # v0.2.0：机器人回他的话（跟他的话在同一个对话）
+        k["bot"] = ts(k.pop("bot", []))
     fa = k.pop("first_ago", None)
     k["first"] = now - float(fa) if fa is not None else None
     k["ctx"] = [tuple(x) for x in k.get("ctx") or []]

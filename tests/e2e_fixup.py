@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 纠错庭端到端（原来「大肥鱼 · 纠错」v0.1.0 的那 51 项）：真的 AstrBot + 这个插件 + 假 QQ 端（假 NapCat 反向 WebSocket）+ 假模型（OpenAI 兼容，按关键字回）。
-v0.1.0（法庭）改了的期望：插件的配置写成分组的（{"fixup": {...}}）；「/纠错」状态的第一行是「大肥鱼 · 法庭 · 纠错庭 v0.1.0」—— 别的一项没动。
+v0.1.0（法庭）改了的期望：插件的配置写成分组的（{"fixup": {...}}）；「/纠错」状态的第一行是「大肥鱼 · 法庭 · 纠错庭 v<版本>」—— 别的一项没动。
+（版本号从 main.py 的 VERSION 读，升版本不用改这个测试）
 旁边有别的大肥鱼插件（astrbot_plugin_fatfish_aiguard / alive / seememe 的源码文件夹）就一起装上，测一起装不冲突。
   1 装上、面板接口、配置默认值
   2 入口 1：有人指出说错了 → 立案 → 核对 → 回他那一轮带上核对结果（只一次）→ 记教训 → 别人问到同一件事时提醒；
@@ -16,6 +17,7 @@ v0.1.0（法庭）改了的期望：插件的配置写成分组的（{"fixup": {
 import asyncio
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -59,6 +61,9 @@ SELF, A, B, C, AI, ADMIN, VER, VER2, VER3 = (
 )
 G1, G2, G3, G4 = 7001, 7002, 7003, 7004
 RES = []
+VER = re.search(
+    r'^VERSION = "([^"]+)"', (PLUGIN_SRC / "main.py").read_text(encoding="utf-8"), re.M
+).group(1)
 BIN = Path(sys.executable).parent
 ASTRBOT = str(BIN / "astrbot") if (BIN / "astrbot").exists() else "astrbot"
 
@@ -603,7 +608,7 @@ async def main():
         text = log_text()
         print(f"[0 装上（一起装的：{'、'.join(SIBLINGS) or '没有'}）]")
         check(
-            "[纠错] v0.1.0 已启用" in text and not mine_tb(text),
+            f"[纠错] v{VER} 已启用" in text and not mine_tb(text),
             "AstrBot 起来了、纠错加载了、没有报错",
             text[-1500:],
         )
@@ -615,7 +620,7 @@ async def main():
         code, st = await api_get(s, hdr)
         check(
             code == 200
-            and st.get("version") == "0.1.0"
+            and st.get("version") == VER
             and st.get("court")
             and st.get("verify")
             and not st["lessons"]["lessons"],
@@ -858,7 +863,7 @@ async def main():
         print("\n[4 指令]")
         out, _ = await turn(qq, G1, ADMIN, "/纠错", at_bot=False)
         check(
-            out and "纠错庭 v0.1.0" in out[-1] and "立案" in out[-1],
+            out and f"纠错庭 v{VER}" in out[-1] and "立案" in out[-1],
             "/纠错：状态",
             out,
         )

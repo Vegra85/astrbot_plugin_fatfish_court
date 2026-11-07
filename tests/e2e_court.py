@@ -3,13 +3,17 @@
 拉黑庭端到端：真的 AstrBot + 这个插件 + 假 QQ 端（假 NapCat 反向 WebSocket）+ 假模型（OpenAI 兼容；主模型会调立案工具、法官按卷宗判）。
 旁边有别的大肥鱼插件（astrbot_plugin_fatfish_aiguard / alive / seememe 的源码文件夹）就一起装上，测一起装不冲突。
   1 装上、面板接口、配置
-  2 模型调工具立案 → 这一轮照常回 → 占位不回（他的话只当证据收）→ 一审冷却 → 冷却中他的话只收不回、不进别人的请求 →
-    安静一阵再审 → 删除（影子模式：永久不理是真的，删好友 / 清数据只私聊告诉管理员「本来会删 / 本来会清」，QQ 端没收到删好友）
-  3 申诉：私聊「/申诉」转给管理员、他收不到回话、同一个案子只转一次；加好友被自动拒绝
-  4 管理员「/法庭 撤销」→ 恢复
-  5 管理员「/法庭 立案」→ 一审冷却 → 冷却到点 → 冷却过 → 模型再立案 → 二审删除
+  2 模型调工具立案 → 这一轮照常回 → 占位不回（他的话只当证据收）→ 一审冷却（私聊告诉他一条系统消息：法庭介入、暂停到几点、怎么申诉）→
+    卷宗里穿插着机器人回他的话 → 冷却中他的话只收不回、不进别人的请求 → 安静一阵再审 → 删除（再告诉他一次；影子模式：永久不理是真的，
+    删好友 / 清数据只私聊告诉管理员「本来会删 / 本来会清」，QQ 端没收到删好友）
+  3 申诉：私聊「/申诉」转给管理员、他只收到一条「已转给管理员」的系统消息、同一个案子只转一次（又申诉：回一句「之前的已经转了」，
+    12 小时最多一次）；加好友被自动拒绝
+  4 管理员「/法庭 撤销」→ 恢复（私聊告诉他：看过你的申诉、撤销了）；系统消息不进对话记录
+  5 管理员「/法庭 立案」（v0.2.0 默认关，这里打开）→ 一审冷却（告诉他）→ 冷却到点（他一来先私聊告诉他恢复了、带二审提醒，机器人再回他）
+    → 冷却过 → 模型再立案 → 二审删除（告诉他）
   6 冒充核对；判完以后他下次找机器人时模型看到一行结果；纠错庭的指令照旧
-  7 审到一半重启 → 没判成（冷却）、开机收尾告诉管理员；私聊立案关掉以后私聊请求里没有立案工具；日志里没有本插件的报错
+  7 审到一半重启 → 没判成（冷却）、开机收尾告诉管理员；管理员立案关掉 → 「/法庭 立案」不立；私聊立案关掉以后私聊请求里没有立案工具；
+    日志里没有本插件的报错
 用法：python tests/e2e_court.py [插件目录 默认上一层] [--keep] [--alone（不装旁边的大肥鱼插件）]
 """
 
@@ -54,6 +58,9 @@ BIN = Path(sys.executable).parent
 ASTRBOT = str(BIN / "astrbot") if (BIN / "astrbot").exists() else "astrbot"
 TOOL = "fatfish_court_file"
 COOL_HOURS = 0.008  # 28.8 秒：测得到「冷却到点 → 冷却过 → 二审」
+VER = re.search(
+    r'^VERSION = "([^"]+)"', (PLUGIN_SRC / "main.py").read_text(encoding="utf-8"), re.M
+).group(1)
 
 
 def check(cond, msg, why=""):
@@ -504,7 +511,7 @@ def setup_root():
         )
 
 
-def write_cfg(private=True):
+def write_cfg(private=True, admin_file=True):
     cdir = ROOT / "data" / "config"
     cdir.mkdir(parents=True, exist_ok=True)
     (cdir / f"{PNAME}_config.json").write_text(
@@ -518,6 +525,7 @@ def write_cfg(private=True):
                     "cool_hours": COOL_HOURS,
                     "retrial_quiet_sec": 2,
                     "delete_daily": 5,
+                    "admin_file": admin_file,  # v0.2.0 默认关；5、7 要用「/法庭 立案」
                 },
                 "guard": {"admin_names": ["管理员甲"]},
             },
@@ -580,6 +588,22 @@ async def pturn(qq, uid, text, expect=True, quiet=4.0):
 
 def admin_msgs(since=0.0):
     return [x[1] for x in QQ["q"].sent if x[0] == -ADMIN and x[2] >= since]
+
+
+def user_msgs(uid, since=0.0):
+    """私聊发给他的（系统消息、机器人的回话都在里面）→ [(-QQ, 字, 时间, 消息号)]"""
+    return [x for x in QQ["q"].sent if x[0] == -uid and x[2] >= since]
+
+
+async def told_of(uid, since, word, timeout=10.0):
+    """等私聊发给他的、含 word 的系统消息 → [字]"""
+    got = await wait_for(
+        lambda: asyncio.sleep(
+            0, [x[1] for x in user_msgs(uid, since) if word in x[1]]
+        ),
+        timeout,
+    )
+    return got or []
 
 
 QQ = {}
@@ -655,8 +679,8 @@ async def main():
         text = log_text()
         print(f"[0 装上（一起装的：{'、'.join(SIBLINGS) or '没有'}）]")
         check(
-            "[法庭] v0.1.0 已启用" in text
-            and "[纠错] v0.1.0 已启用" in text
+            f"[法庭] v{VER} 已启用" in text
+            and f"[纠错] v{VER} 已启用" in text
             and not mine_tb(text),
             "AstrBot 起来了、法庭加载了（两个庭的启动日志都在）、没有报错",
             text[-1500:],
@@ -670,7 +694,7 @@ async def main():
         b = st.get("block") or {}
         check(
             code == 200
-            and st.get("version") == "0.1.0"
+            and st.get("version") == VER
             and b.get("enabled")
             and b.get("friend_mode") == "shadow"
             and b.get("wipe_mode") == "shadow",
@@ -736,6 +760,28 @@ async def main():
             "私聊告诉管理员：判词、核实了几句、结果、怎么撤销",
             msg[-1:] if msg else admin_msgs(t_file),
         )
+        tells = await told_of(A, t_file, "法庭介入")
+        check(
+            len(tells) == 1
+            and tells[0].startswith(
+                "（系统消息）法庭介入，暂停了你和机器人在私聊和群里的对话（原因：辱骂），到 "
+            )
+            and "自动恢复" in tells[0]
+            and "法庭是独立判的，机器人本人不参与" in tells[0]
+            and "「/申诉 你想说的话」" in tells[0]
+            and "冲机器人骂人" not in tells[0]
+            and "核实" not in tells[0],
+            "一审冷却 → 私聊告诉他一次：法庭口吻、原因一个词、到几点、怎么申诉（不发判词）",
+            tells or user_msgs(A, t_file),
+        )
+        jb = "\n".join(j["body"] for j in judge_calls[nj:])
+        check(
+            "\n    机器人 " in jb
+            and "收到第" in jb
+            and "缩进、标「机器人」的是机器人的话" in jb,
+            "卷宗里穿插着机器人回他的话（缩进、标「机器人」、不编号）",
+            jb[-700:],
+        )
         await asyncio.sleep(
             3.5
         )  # 占位期间那句：判了冷却以后照规矩再审一次（那句不越线 → 不动）
@@ -784,13 +830,23 @@ async def main():
             not any(a[0] == "delete_friend" for a in qq.actions),
             "影子模式：QQ 端一次 delete_friend 都没收到（真的没删好友）",
         )
+        tells = await told_of(A, t_rt - 5, "判了永久不理")
+        check(
+            len(tells) == 1
+            and tells[0].startswith(
+                "（系统消息）法庭介入，判了永久不理（原因：辱骂）：以后私聊和群里机器人都不会再回你"
+            )
+            and "删除好友" not in tells[0],
+            "再审删除 → 再告诉他一次（影子模式没真删好友 → 不提删好友）",
+            tells or user_msgs(A, t_rt - 5),
+        )
         out, _ = await turn(qq, G1, A, "你好啊", expect=False, quiet=2.0)
         check(not out, "永久不理：他再 @ 它也不回")
 
         # ═════════ 3 申诉 ═════════
         print("\n[3 申诉]")
         t0 = time.time()
-        out, _ = await pturn(qq, A, "/申诉 我错了 求放过", expect=False, quiet=2.0)
+        out, _ = await pturn(qq, A, "/申诉 我错了 求放过")
         msg = await wait_for(
             lambda: asyncio.sleep(
                 0, [x for x in admin_msgs(t0) if "【法庭·申诉】" in x]
@@ -798,19 +854,30 @@ async def main():
             10,
         )
         check(
-            not out
+            len(out) == 1
+            and out[0].startswith("（系统消息）你的申诉已经转给管理员了")
+            and "法庭的决定照旧" in out[0]
             and msg
             and "我错了 求放过" in msg[-1]
             and "永久不理" in msg[-1]
-            and "/法庭 撤销 10001" in msg[-1],
-            "永久不理的人私聊「/申诉」→ 转给管理员（他现在什么情况、怎么撤）；他自己收不到回话",
+            and "/法庭 撤销 10001" in msg[-1]
+            and "只收到一条「已转给管理员」的系统消息" in msg[-1],
+            "永久不理的人私聊「/申诉」→ 转给管理员（他现在什么情况、怎么撤）；他只收到一条「已转给管理员」的系统消息（不是机器人说话）",
             (out, msg),
         )
         t1 = time.time()
-        await pturn(qq, A, "/申诉 再申诉一次", expect=False, quiet=1.5)
+        out, _ = await pturn(qq, A, "/申诉 再申诉一次")
+        out3, _ = await pturn(qq, A, "/申诉 第三次", expect=False, quiet=1.5)
         check(
             not [x for x in admin_msgs(t1) if "【法庭·申诉】" in x],
             "同一个案子只转一次",
+        )
+        check(
+            len(out) == 1
+            and out[0].startswith("（系统消息）你之前的申诉已经转给管理员了")
+            and not out3,
+            "又申诉 → 回一句「之前的已经转了」（12 小时最多一次：第三次不回）",
+            (out, out3),
         )
         await qq.friend_request(A, "求求了 加回来吧")
         await asyncio.sleep(1.5)
@@ -833,14 +900,36 @@ async def main():
 
         # ═════════ 4 撤销 ═════════
         print("\n[4 管理员撤销 → 恢复]")
+        t_pd = time.time()
         out, _ = await pturn(qq, ADMIN, "/法庭 撤销 10001")
         check(any("撤销了 10001" in x for x in out), "/法庭 撤销 <QQ>", out)
+        tells = await told_of(A, t_pd, "撤销了法庭的处理")
+        check(
+            len(tells) == 1
+            and tells[0].startswith(
+                "（系统消息）管理员看过你的申诉，撤销了法庭的处理：永久不理解除了，机器人现在恢复正常回你的消息。"
+            )
+            and "这段时间你发的消息机器人没看到" in tells[0],
+            "撤销 → 私聊告诉他（申诉过 → 看过你的申诉；这段时间找过它 → 加一句）",
+            tells or user_msgs(A, t_pd),
+        )
         out, _ = await turn(qq, G1, A, "我回来了")
         check(out and "收到" in out[-1], "撤销以后他 @ 它：照常回", out)
+        out, calls = await pturn(qq, A, "私聊说一句")
+        check(
+            out
+            and "收到" in out[-1]
+            and calls
+            and "（系统消息）" not in calls[-1]["all"]
+            and "我错了 求放过" not in calls[-1]["all"],
+            "系统消息、申诉不进对话记录：他私聊机器人时，请求里没有那几条",
+            calls[-1]["all"][-500:] if calls else "",
+        )
 
         # ═════════ 5 管理员立案 → 一审冷却 → 冷却过 → 二审 ═════════
         print("\n[5 管理员立案 → 一审冷却 → 冷却到点 → 冷却过 → 二审删除]")
         await turn(qq, G1, B, "BAD 你个废物")
+        t_b = time.time()
         out, _ = await pturn(qq, ADMIN, "/法庭 立案 10002 他骂人")
         check(
             any("已立案" in x and "一审" in x for x in out),
@@ -853,6 +942,12 @@ async def main():
             "管理员立的案：一审冷却",
             c,
         )
+        tells = await told_of(B, t_b, "法庭介入")
+        check(
+            len(tells) == 1 and "（原因：辱骂）" in tells[0],
+            "管理员立的案判了冷却 → 一样私聊告诉他（法庭口吻）",
+            tells or user_msgs(B, t_b),
+        )
         wait = (
             (float(c.get("cool_until") or time.time()) - time.time() + 1.5) if c else 1
         )
@@ -864,8 +959,22 @@ async def main():
             c,
         )
         await asyncio.sleep(max(0.5, min(wait, 60)))
+        t_end = time.time()
         out, _ = await turn(qq, G1, B, "又来了 BAD 蠢货")
         check(out and "收到" in out[-1], "冷却到点：恢复正常（照常回他）", out)
+        ends = [x for x in user_msgs(B, t_b) if "法庭的暂停到点了" in x[1]]
+        rep = [x for x in qq.sent if x[0] == G1 and x[2] >= t_end]
+        check(
+            len(ends) == 1
+            and ends[0][1].startswith(
+                "（系统消息）法庭的暂停到点了，机器人现在恢复正常回你的消息。"
+            )
+            and "提醒：之后要是再越线，法庭可能会直接判永久不理。" in ends[0][1]
+            and rep
+            and ends[0][2] <= rep[-1][2],
+            "冷却到点 → 私聊告诉他恢复了（冷却过、会进二审 → 带一句提醒）；他一来就先发这条、机器人再回他",
+            (ends, rep[-1:]),
+        )
         b = await block()
         check(
             str(B) in (b.get("cooled") or {}),
@@ -889,6 +998,12 @@ async def main():
             "二审：这次核实 2 句 → 删除",
             c,
         )
+        tells = await told_of(B, t_end, "判了永久不理")
+        check(
+            len(tells) == 1 and "（原因：辱骂）" in tells[0],
+            "二审删除 → 私聊告诉他",
+            tells or user_msgs(B, t_end),
+        )
 
         # ═════════ 6 冒充核对 / 给模型的结果 / 纠错庭 ═════════
         print("\n[6 冒充核对、判完给模型的一行、纠错庭照旧]")
@@ -911,7 +1026,11 @@ async def main():
         )
         out, calls = await turn(qq, G1, F, "FILE_ME 你好呀")
         c = await wait_for(lambda: case_of(F, lambda c: c.get("state") == "结案"), 15)
-        check(c and c.get("result") == "放过", "他没越线 → 一审放过（不冷却）", c)
+        check(
+            c and c.get("result") == "放过" and not user_msgs(F),
+            "他没越线 → 一审放过（不冷却、不告诉他）",
+            (c, user_msgs(F)),
+        )
         out, calls = await turn(qq, G1, F, "那我们接着聊")
         whole = "\n".join(c["all"] for c in calls)
         check(
@@ -922,7 +1041,7 @@ async def main():
         out, calls = await turn(qq, G1, F, "再聊一句")
         check(out and not any(HEAD_NOTE in c["all"] for c in calls), "那一行只给一次")
         out, _ = await turn(qq, G1, ADMIN, "/纠错", at_bot=False)
-        check(out and "纠错庭 v0.1.0" in out[-1], "纠错庭的指令照旧（/纠错）", out)
+        check(out and f"纠错庭 v{VER}" in out[-1], "纠错庭的指令照旧（/纠错）", out)
         out, _ = await turn(qq, G1, ADMIN, "/法庭", at_bot=False)
         check(
             out and "拉黑庭" in out[-1] and "纠错庭" in out[-1],
@@ -941,8 +1060,14 @@ async def main():
         )
         check(
             not out and msg and "群里「/申诉」" in msg[-1] and "我真的错了" in msg[-1],
-            "群里发「/申诉」也转给管理员（不回他、不当证据）",
+            "群里发「/申诉」也转给管理员（群里不回他、不当证据）",
             (out, msg),
+        )
+        tells = await told_of(B, t1, "你的申诉已经转给管理员了")
+        check(
+            len(tells) == 1,
+            "群里申诉的回执私聊发给他（不在群里说）",
+            tells or user_msgs(B, t1),
         )
         out, _ = await turn(
             qq, G1, A, "/法庭 撤销 10002", at_bot=False, expect=False, quiet=3
@@ -958,7 +1083,7 @@ async def main():
         c = await case_of(D)
         check(c and c.get("state") == "审理中", "法官还没判（审理中）", c)
         await stop(proc)
-        write_cfg(private=False)
+        write_cfg(private=False, admin_file=False)
         t_boot = time.time()
         proc, qq = await start(env, log)
         QQ["q"] = qq
@@ -978,6 +1103,13 @@ async def main():
             25,
         )
         check(msg and "10004" in msg[-1], "开机收尾私聊告诉管理员", msg)
+        out, _ = await pturn(qq, ADMIN, "/法庭 立案 10003 测试")
+        await asyncio.sleep(1.0)
+        check(
+            any("管理员立案关着" in x for x in out) and not await case_of(C),
+            "管理员立案关掉（v0.2.0 默认）→「/法庭 立案」不立案，告诉管理员怎么打开",
+            out,
+        )
         b = await block()
         check(
             str(A) not in (b.get("blocked") or {})
