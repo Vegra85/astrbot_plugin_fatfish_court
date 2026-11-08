@@ -24,6 +24,7 @@ import time
 from collections import deque
 
 from .text import keys, short
+from .websearch import web_of
 
 DEFAULTS = {
     "window_min": 10.0,  # 它说过的话多少分钟内被质疑才立案
@@ -83,7 +84,7 @@ RESULT_TEXT = {
 HEAD = "\n# 纠错（系统核对的 不是谁说的话）\n"
 
 
-# 本插件（和别的大肥鱼插件）状态标题里的「（系统…的 不是谁说的话）」：里面的「谁说的」不是在怀疑它（有人原样贴一段过来也一样）
+# 本插件（和别的鱼力max 插件）状态标题里的「（系统…的 不是谁说的话）」：里面的「谁说的」不是在怀疑它（有人原样贴一段过来也一样）
 _OWN_TAG = re.compile(r"[（(][^（）()]{0,16}不是谁说的话[）)]|不是谁说的话")
 
 
@@ -135,9 +136,10 @@ def private_of(conv, uid):
     return ":FriendMessage:" in c and c.endswith(":" + str(uid))
 
 
-def screen_input(case, chat=(), now=None):
+def screen_input(case, chat=(), now=None, web=""):
     """拼给判断模型看的：现在几点（v0.2.1：以前没有 —— 判「今天 / 明天 / 几点」这类对不对全靠猜）
-    + 前后文（最近几句，机器人说的标「机器人」）+ 规则抓到的这一案"""
+    + 前后文（最近几句，机器人说的标「机器人」）+ 规则抓到的这一案
+    + web：开了「核对时上网查」、这次真查到了的【网上查到的（可能不准）】那一段（v0.3.0，core/websearch.py 拼的）"""
     import time as _t
     lines = "\n".join(short(x, 120) for x in list(chat)[-10:]) or "（没有）"
     clock = _t.strftime("%Y-%m-%d %H:%M %A", _t.localtime(now if now is not None else _t.time()))
@@ -150,6 +152,7 @@ def screen_input(case, chat=(), now=None):
             if case.get("prompt")
             else ""
         )
+        + (f"\n{web}" if web else "")
     )
 
 
@@ -190,6 +193,8 @@ def parse_screen(raw):
         "right": short(js.get("right") or "", 30),
         "basis": short(js.get("basis") or "", 50),
         "topic": short(js.get("topic") or "", 30),
+        # v0.3.0：带了网上查到的那次，它说参考了没有（用了 / 没用 / 冲突；没写 = ""）
+        "web": web_of(js.get("web")),
     }
 
 
@@ -436,6 +441,10 @@ class Court:
         return txt, r["case"].get("id")
 
     # ───────── 杂项 ─────────
+    def note(self, cid, **kw):
+        """外面给最近的案子补记一笔（v0.3.0：这次核对上网查了什么、带没带上、判断模型说用没用）"""
+        self._log_update(cid, **kw)
+
     def _log_update(self, cid, **kw):
         for x in reversed(self.log):
             if x.get("id") == cid:

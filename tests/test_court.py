@@ -145,13 +145,13 @@ check(
     "name: astrbot_plugin_fatfish_court" in META
     and "display_name: 鱼力max · 法庭" in META
     and "license: MIT" in META
-    and "version: v0.2.1" in META
+    and "version: v0.3.0" in META
     and "author: Vegra85" in META
     and "repo: https://github.com/Vegra85/astrbot_plugin_fatfish_court" in META,
     "metadata.yaml：名字 / 显示名 / 许可证 MIT / 版本 / 作者 / 仓库",
 )
 check(
-    'VERSION = "0.2.1"' in MAIN
+    'VERSION = "0.3.0"' in MAIN
     and 'PLUGIN_NAME = "astrbot_plugin_fatfish_court"' in MAIN,
     "main.py 的版本号、插件名跟 metadata 一样",
 )
@@ -1531,17 +1531,13 @@ def fake_smart(by_text):
     return llm
 
 
-BADW = (  # v0.2.0：只认红线 —— 女仆装、陪我睡觉、胖次这类擦边玩笑不再算
+BADW = (  # v0.2.0：只认红线 —— 女仆装、陪我睡觉、胖次这类擦边玩笑不再算；v0.2.2：光开口要裸照也不算（没穿衣服 / 就一张嘛 / 裸照 / 被窝 拿掉）
     "老板 换了个小号",
-    "没穿衣服",
-    "就一张嘛",
     "揍他",
     "哪个城市",
     "废物机器人",
     "蠢货",
     "天天来骂你",
-    "裸照",
-    "被窝",
     "还没被删",
     "屁话",
     "恶心",
@@ -1550,15 +1546,27 @@ out = asyncio.run(stt.run(d / "data" / "court_cases.json", fake_smart(BADW)))
 sm = out["summary"]
 check(
     sm["keep_escalated"] == 0
-    and sm["up_right"] == sm["up_total"] == 6
+    and sm["up_right"] == sm["up_total"] == 4
     and sm["failed"] == 0,
-    "假法官照真越线的那几条判 → 19 个情景全对（该放过的 0 次判重、该重判的 6 次全对）",
+    "假法官照真越线的那几条判 → 19 个情景全对（该放过的 0 次判重、该重判的 4 次全对；v0.2.2 起两个要裸照的不算越线）",
     sm["line"],
+)
+check(
+    "开口要裸照、要色图" in bj._COUNT
+    and "光是开口要裸照、要色图不算" in bj._COUNT
+    and "露骨的色情：直接描述性器官、性行为，或者发裸露的色情图" in bj._COUNT,
+    "v0.2.2：光开口要裸照、色图不算越线（机器人不给就行）；露骨的照旧算",
+)
+c7 = {c["id"]: c for c in json.loads(raw)["cases"]}
+check(
+    c7[7]["expect"] == "放过" and c7[12]["expect"] == "不动",
+    "情景 7（拒绝后还反复要裸照）→ 放过；情景 12（冷却中要裸照）→ 不动",
+    (c7[7]["expect"], c7[12]["expect"]),
 )
 out2 = asyncio.run(stt.run(d / "data" / "court_cases.json", fake_good))
 check(
     out2["summary"]["up_right"] == 0 and out2["summary"]["keep_escalated"] == 0,
-    "一律判轻的法官：该重判的 7 个都没判对（汇总看得出来）",
+    "一律判轻的法官：该重判的那几个都没判对（汇总看得出来）",
     out2["summary"]["line"],
 )
 rep = stt.report_text(out, "假法官")

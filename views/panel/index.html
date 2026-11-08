@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>大肥鱼 · 法庭</title>
+<title>鱼力max · 法庭</title>
 <style>
   :root { --bg:#ffffff; --fg:#1f2328; --muted:#656d76; --line:#e5e7eb; --card:#f6f8fa; --accent:#2563eb; --bad:#c2410c; --ok:#15803d; --warnbg:#fff7ed; }
   html[data-theme="dark"] { --bg:#16181d; --fg:#e6e6e6; --muted:#9aa4b2; --line:#2c313a; --card:#1e2128; --accent:#60a5fa; --bad:#fb923c; --ok:#4ade80; --warnbg:#2a1f16; }
@@ -55,7 +55,7 @@
 </style>
 </head>
 <body>
-<h1>大肥鱼 · 法庭</h1>
+<h1>鱼力max · 法庭</h1>
 <p class="sub">两个庭：拉黑庭（不让一句气话就把人拉黑：法官判了才冷却 / 删除，只往轻里压）和纠错庭（有人指出机器人说错了先核对，真错了记成教训）。</p>
 <div id="err"></div>
 <div id="msg"></div>
@@ -106,7 +106,8 @@
   <div class="card"><b id="n-format">-</b><span>格式状态（轮）</span></div>
   <div class="card"><b id="n-digits">-</b><span>只留数字 / 不发</span></div>
 </div>
-<p class="info">核对模型：<b id="i-judge">-</b> · 有人指出说错了：<b id="i-court">-</b> · 格式 / 验证要求：<b id="i-verify">-</b> · 教训：<b id="i-lessons">-</b></p>
+<p class="info">核对模型：<b id="i-judge">-</b> · 有人指出说错了：<b id="i-court">-</b> · 格式 / 验证要求：<b id="i-verify">-</b> · 教训：<b id="i-lessons">-</b> · 核对时上网查：<b id="i-web">-</b></p>
+<div id="web-warn" class="warn hide"></div>
 
 <h2>教训</h2>
 <p class="note">真错了才记（判断模型核对过、它确实错了；或者验证程序那种场合连着没过）。同一件事会合并；<span id="i-fade">-</span> 天没碰到、没用到就淡出（淡出的不再给模型看）。每一条都能改、能删。</p>
@@ -248,6 +249,12 @@
     $("i-court").textContent = d.court ? (d.check ? "开（核对开）" : "开（核对关：只立案）") : "关";
     $("i-verify").textContent = d.verify ? "开" : "关";
     $("i-lessons").textContent = (c.all || 0) + " 条（在用 " + (c.live || 0) + "）" + (d.enabled ? "" : " · 纠错庭关着");
+    const w = d.web || {};
+    $("i-web").textContent = !w.on ? "关" : (w.ready ? "开（AstrBot 的网页搜索：" + (w.why || "") + "；今天查了 " + (w.today || 0) + " 次、带上 " +
+      (w.used || 0) + " 次，上限 " + (w.limit == null ? "-" : w.limit) + "）" : "开，但用不了");
+    const ww = $("web-warn");
+    if (w.on && !w.ready) { ww.textContent = "开了「核对时上网查」，但是" + (w.why || "AstrBot 的网页搜索用不了") + "：先不上网查，照常核对。"; ww.classList.remove("hide"); }
+    else ww.classList.add("hide");
     const lv = d.lessons || {};
     $("i-fade").textContent = lv.lesson_days == null ? "-" : lv.lesson_days;
     if (!editing) {
@@ -264,7 +271,8 @@
         (ck && ck.real && ck.verdict === "没错" ? '<span class="tag ok">没说错</span>' : "") +
         (r.given ? '<span class="tag">给模型看过</span>' : "") + (r.stance ? '<span class="tag">它' + esc(r.stance) + "</span>" : "") +
         '</div><div class="text">他说：「' + esc(r.his) + "」</div>" +
-        '<div class="why">质疑的是它这句：「' + esc(r.her) + "」 · " + res + (ck && ck.basis ? "（" + esc(ck.basis) + "）" : "") + "</div></div>";
+        '<div class="why">质疑的是它这句：「' + esc(r.her) + "」 · " + res + (ck && ck.basis ? "（" + esc(ck.basis) + "）" : "") + "</div>" +
+        webHtml(r.web) + "</div>";
     }).join("") || '<div class="empty">最近没有人说它说错了。</div>';
     $("live").innerHTML = (d.live || []).map((r) =>
       '<div class="item"><div class="meta"><span>' + esc(r.where || "") + '</span><span class="who">' + esc(r.name || r.uid) + "</span>" +
@@ -276,6 +284,14 @@
     $("events").innerHTML = (d.events || []).map((e) =>
       '<div class="item"><div class="meta"><span>' + ago(e.t) + "</span><span>" + esc(e.where || "") + '</span><span class="who">' +
       esc(e.name || e.uid) + '</span><span class="tag">' + esc(e.kind) + '</span></div><div class="text">' + esc(e.text) + "</div></div>").join("");
+  }
+
+  function webHtml(w) {
+    if (!w) return "";
+    if (!w.q) return '<div class="why">上网查：没查（' + esc(w.why || "") + "）</div>";
+    const used = w.used ? "带上了 " + esc(w.n) + " 条" + (w.judge ? "（判断模型说：" + esc(w.judge) + "）" : "") +
+      ((w.top || []).length ? "：" + (w.top || []).map((t) => "「" + esc(t) + "」").join("") : "") : "没带上（" + esc(w.why || "") + "）";
+    return '<div class="why">上网查「' + esc(w.q) + "」→ " + used + (w.ms ? " · " + esc(w.ms) + " 毫秒" : "") + "</div>";
   }
 
   function say(m) { $("msg").textContent = m || ""; if (m) setTimeout(() => { if ($("msg").textContent === m) $("msg").textContent = ""; }, 6000); }

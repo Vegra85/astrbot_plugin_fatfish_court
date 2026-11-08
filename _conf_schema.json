@@ -4,7 +4,7 @@
     "type": "object",
     "items": {
       "enabled": {
-        "description": "开启 大肥鱼 · 法庭",
+        "description": "开启 鱼力max · 法庭",
         "type": "bool",
         "default": true,
         "hint": "关了两个庭都不做事（教训、名单都留着；永久不理 / 冷却中的人这时也不挡了）"
@@ -75,6 +75,30 @@
         "type": "int",
         "default": 6,
         "hint": "超过的只立案不核对"
+      },
+      "web_check": {
+        "description": "核对时上网查",
+        "type": "bool",
+        "default": false,
+        "hint": "v0.3.0，默认关（要花钱、会慢）。开了以后：核对一条「他说机器人错了」之前，从机器人那句（或者它在回的那个问题）和他的纠正里按规则抽一个搜索词，用 AstrBot 自己配的网页搜索查一次（配置 → AI → 网页搜索：开「启用网页搜索」、选服务商、填 key；注意开了以后对话模型自己也能搜），前几条结果（标题 + 摘要，截短）当「网上查到的（可能不准）」给判断模型参考。抽不出搜索词、AstrBot 没配网页搜索、超时：这次不带，照常核对（面板上写着）。回他之前会多等最多「上网查最多等几秒」"
+      },
+      "web_timeout_sec": {
+        "description": "上网查最多等几秒",
+        "type": "float",
+        "default": 6.0,
+        "hint": "超时这次核对就不带网上的结果（照常核对）"
+      },
+      "web_daily_max": {
+        "description": "每天最多上网查几次",
+        "type": "int",
+        "default": 30,
+        "hint": "每次按 AstrBot 里配的搜索服务商计费；到了只核对、不上网"
+      },
+      "web_results": {
+        "description": "带几条搜到的结果",
+        "type": "int",
+        "default": 3,
+        "hint": "每条只带标题和摘要（标题 40 字、摘要 120 字以内）；最多 8 条"
       },
       "window_min": {
         "description": "它说过的话多少分钟内被质疑才算",
@@ -176,7 +200,7 @@
         "description": "认 AI 插件认出来的机器人说「你错了」不算",
         "type": "bool",
         "default": true,
-        "hint": "装了 大肥鱼 · 认 AI（astrbot_plugin_fatfish_aiguard）才有用：它认出来的别人家的机器人说的「不对」不立案（验证程序那种照样认）"
+        "hint": "装了 鱼力max · 认 AI（astrbot_plugin_fatfish_aiguard）才有用：它认出来的别人家的机器人说的「不对」不立案（验证程序那种照样认）"
       },
       "private": {
         "description": "私聊里也管",

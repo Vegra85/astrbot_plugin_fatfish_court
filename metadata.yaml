@@ -1,8 +1,8 @@
 name: astrbot_plugin_fatfish_court
 display_name: 鱼力max · 法庭
-desc: 两个庭：有人说机器人错了 → 先核对再认、真错了记教训；有人越红线 → 法官看原话判（暧昧玩笑不算）、判了才冷却 / 删除，默认只提醒不真删，被判的人能申诉。还有冒充核对。（原「大肥鱼 · 法庭」）细节和配置见 README。
+desc: 两个庭：有人说机器人错了 → 先核对再认（可选上网查）、真错了记教训；有人越红线 → 法官看原话判（暧昧玩笑不算）、判了才冷却 / 删除，默认只提醒不真删，被判的人能申诉。还有冒充核对。（原「大肥鱼 · 法庭」）细节和配置见 README。
 short_desc: 先审再判：不乱拉黑、不乱认错，判了才冷却，能申诉
-version: v0.2.1
+version: v0.3.0
 author: Vegra85
 repo: https://github.com/Vegra85/astrbot_plugin_fatfish_court
 license: MIT
@@ -10,6 +10,7 @@ astrbot_version: ">=4.29,<5"
 support_platforms:
   - aiocqhttp
 social_link: https://github.com/Vegra85
+category: 工具
 tags:
   - 鱼力max
   - 大肥鱼
@@ -19,4 +20,5 @@ tags:
   - 防骚扰
   - 申诉
   - 事实核对
+  - 联网核对
   - 群聊
