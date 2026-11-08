@@ -1,4 +1,6 @@
-# 大肥鱼 · 法庭
+# 鱼力max · 法庭
+
+> **鱼力max 系列（鱼有分寸）**：[活人感](https://github.com/Vegra85/astrbot_plugin_fatfish_alive) · [认 AI](https://github.com/Vegra85/astrbot_plugin_fatfish_aiguard) · [看图懂梗](https://github.com/Vegra85/astrbot_plugin_fatfish_seememe) · [法庭](https://github.com/Vegra85/astrbot_plugin_fatfish_court) —— 每个都能单独用，一起装自动让路。作者 Vegra85；跟市场上其他叫「大肥鱼」的插件无关（11-08 起由「大肥鱼 · X」改叫「鱼力max · X」，仓库名和配置都没变）。
 
 AstrBot 插件。两个庭，管两件让人头疼的事：
 
@@ -336,3 +338,14 @@ python tests/e2e_fixup.py      # 纠错庭端到端（原来那 51 项）
 ## 协议
 
 MIT
+
+## 鱼力max 全家福
+
+| 插件 | 装它如果你… | 解决什么 |
+|---|---|---|
+| [鱼力max · 活人感](https://github.com/Vegra85/astrbot_plugin_fatfish_alive) | 嫌机器人一条一条机械地回、人人说话都接、花钱太快 | 连发攒一攒再回、没 @ 也会接话、该闭嘴时闭嘴、花多了少说 |
+| [鱼力max · 认 AI](https://github.com/Vegra85/astrbot_plugin_fatfish_aiguard) | 群里还有别人家的机器人，两条鱼互聊个没完 | 不用填名单，自己认出别家 AI、刹住对聊 |
+| [鱼力max · 看图懂梗](https://github.com/Vegra85/astrbot_plugin_fatfish_seememe) | 群友发梗图它看不懂、认不出图里是它自己 | 回话前先看懂字、画面、梗，谐音梗也查 |
+| [鱼力max · 法庭](https://github.com/Vegra85/astrbot_plugin_fatfish_court) | 机器人一句气话就拉黑人、被人一说就乱认错 | 先核对再认错、只有红线才立案、判了才冷却，能申诉 |
+
+觉得有用请点个 Star，市场里点个「喜欢」—— 这两样决定新用户能不能看到它。

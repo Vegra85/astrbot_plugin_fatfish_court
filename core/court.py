@@ -135,10 +135,14 @@ def private_of(conv, uid):
     return ":FriendMessage:" in c and c.endswith(":" + str(uid))
 
 
-def screen_input(case, chat=()):
-    """拼给判断模型看的：前后文（最近几句，机器人说的标「机器人」）+ 规则抓到的这一案"""
+def screen_input(case, chat=(), now=None):
+    """拼给判断模型看的：现在几点（v0.2.1：以前没有 —— 判「今天 / 明天 / 几点」这类对不对全靠猜）
+    + 前后文（最近几句，机器人说的标「机器人」）+ 规则抓到的这一案"""
+    import time as _t
     lines = "\n".join(short(x, 120) for x in list(chat)[-10:]) or "（没有）"
+    clock = _t.strftime("%Y-%m-%d %H:%M %A", _t.localtime(now if now is not None else _t.time()))
     return (
+        f"【现在】{clock}（本机时间；判跟日期、钟点有关的对错以这个为准）\n"
         f"【前后文】\n{lines}\n【规则抓到的】\n{case.get('name')}{'（管理员）' if case.get('admin') else ''} 说："
         f"「{case.get('his')}」\n规则认为他在质疑机器人这句：「{case.get('her')}」（{case.get('how')}）"
         + (
