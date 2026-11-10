@@ -132,6 +132,14 @@ def told(io, uid):
     return [t for u, t in io.told if u == uid]
 
 
+def cooled_before(st, ml, uid):
+    """他以前被冷却过、三天前到点，那次的通知发到了他手里；昨天又冲机器人骂了一句
+    （v0.3.1：二审判删除要 上次通知过他 + 前后一共 3 句 + 分布在 2 天，见 tests/test_court_031.py —— 这里凑齐，下面测的是「告诉他」）"""
+    st.mark_cooled(uid, int(time.time()) - 3 * 86400)
+    st.d["cooled"][uid]["told"] = int(time.time()) - 4 * 86400
+    say(ml, uid, "昨天也骂了 BAD", ago=90000)
+
+
 # ═══════════════ ① 从轻：提示词 ═══════════════
 print("\n[① 从轻：算数的只剩红线；三种审都拿不准判轻的]")
 P1, PR, P2 = bj.sys_prompt("一审"), bj.sys_prompt("再审"), bj.sys_prompt("二审")
@@ -241,7 +249,7 @@ async def main():
     check(len(told(io, A)) == 1, "告诉过了 → 他私聊机器人时不再说")
     # 真删好友：先告诉他 → 再删
     st, ml, io, fl, _ = mk(cfg={"friend_mode": "auto", "delete_notice_wait": 0})
-    st.mark_cooled(E, int(time.time()) - 120)
+    cooled_before(st, ml, E)
     say(ml, E, "又骂 BAD", ago=100)
     say(ml, E, "还骂 BAD", ago=90)
     r = fl.file(E, "小堇", "又骂", G)
@@ -253,7 +261,7 @@ async def main():
           "二审判删除、真删好友 → 先告诉他（结果 + 删了以后在加好友的验证消息里申诉）再删；判完不重复发", (io.order, m))
     # 只提醒（不真删）→ 判完告诉他（私聊申诉那套）
     st, ml, io, fl, _ = mk()
-    st.mark_cooled(E, int(time.time()) - 120)
+    cooled_before(st, ml, E)
     say(ml, E, "又骂 BAD", ago=100)
     say(ml, E, "还骂 BAD", ago=90)
     r = fl.file(E, "小堇", "又骂", G)
@@ -263,11 +271,12 @@ async def main():
           "删好友只提醒 → 判完告诉他：永久不理、私聊 /申诉", m)
     # 再审判删除
     st, ml, io, fl, _ = mk()
-    say(ml, A, "骂 BAD", ago=300)
+    say(ml, A, "骂 BAD", ago=90000)  # v0.3.1：昨天骂的；下面通知之后又骂两句（判删除要前后 3 句、分布在 2 天）
     r = fl.file(A, "阿木", "骂我", G)
     await settle(io)
     n0 = len(told(io, A))
     fl.evidence(A, {"t": time.time(), "mid": "x1", "conv": G, "tag": bj.TAG_OWN, "text": "冷却了还骂 BAD"})
+    fl.evidence(A, {"t": time.time(), "mid": "x2", "conv": G, "tag": bj.TAG_OWN, "text": "接着骂 BAD"})
     await settle(io, 8)
     c = st.case(r["case"])
     m = told(io, A)

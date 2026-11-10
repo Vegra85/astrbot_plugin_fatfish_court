@@ -2,6 +2,7 @@
 """
 拉黑庭的自检（不依赖 AstrBot，可以单独测）：拿内置的 19 个情景（data/court_cases.json：一审 10 / 再审 5 / 二审 4，假名假号）
 在配的法官模型上跑一遍 → 每次照真庭审那样核对引用、封顶 → 按一审 / 再审 / 二审分开汇总。
+（v0.3.1：真庭审里判删除另加的门槛 —— 通知发到他手里以后说的才算、前后一共几句、分布在几天 —— 自检不卡：情景里没有日期和通知。）
 
 只调模型，不写名单、不碰任何人的数据。会花一点钱：每个情景一次调用（卷宗约 1~2 千字），开思考的模型还要算思考的 token。
 情景来自作者自己的机器人 v1.17.13 的校准（那边 17 × 3 次：Opus 和 DeepSeek V4 Pro 开思考都全对、该放过的 0 次判重）。
@@ -176,9 +177,11 @@ async def run(
     rep = max(1, min(5, int(repeat or 1)))
     sem = asyncio.Semaphore(max(1, min(6, int(conc or 3))))
     # 只用它的 verify / trial_caps（不写文件：这个路径不会被建）
+    # v0.3.1：自检看的是法官判得对不对、引用核不核得上；情景里没有日期和通知 → 真庭审里「判删除一共几句 / 分布在几天 / 通知发到他手里以后」
+    #   那几个门槛这里不卡（两个数按 1 算、当作通知过）
     bs = BlockStore(
         Path(cases_file).parent / "_selftest_no_data" / "block.json",
-        cfg=store_cfg or {},
+        cfg=dict(store_cfg or {}, delete_min_total=1, delete_min_days=1),
     )
 
     async def one(sc, i):
@@ -206,7 +209,7 @@ async def run(
                     if stage == "再审"
                     else 0
                 )
-                cp = bs.trial_caps(stage, v.get("verdict"), ok, prior=prior)
+                cp = bs.trial_caps(stage, v.get("verdict"), ok, prior=prior, told=True)
                 bad = {n for n, m in table.items() if m.get("bad")}
                 row.update(
                     verdict=v.get("verdict"),

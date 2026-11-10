@@ -67,7 +67,7 @@ except Exception:
     _CMD_FILTERS = ()
 
 PLUGIN_NAME = "astrbot_plugin_fatfish_court"
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 TAG = "[纠错]"  # 纠错庭的日志（跟原来的纠错插件一样）
 BTAG = "[法庭]"  # 拉黑庭 / 冒充核对 / 申诉的日志
 AIGUARD = "astrbot_plugin_fatfish_aiguard"
@@ -520,6 +520,9 @@ class FatfishCourt(Star):
                 "retrial_max": self._bf("retrial_max", 3),
                 "retrial_min_total": self._bf("retrial_min_total", 2),
                 "second_min": self._bf("second_min", 2),
+                # （11-10 v0.3.1 审查 VP1-2）判删除（永久不理 / 删好友）另加的两个门槛；老配置里没有这两项 = 3 句 / 2 天
+                "delete_min_total": self._bf("delete_min_total", 3),
+                "delete_min_days": self._bf("delete_min_days", 2),
                 "delete_daily": self._bf("delete_daily", 1),
                 "court_daily": self._bf("court_daily", 10),
                 "appeal_days": num(self.ac.get("days", 7), 7),
@@ -1086,13 +1089,16 @@ class FatfishCourt(Star):
         if p is None or not uid or not text:
             return False
         try:
-            await self.context.send_message(
+            sent = await self.context.send_message(
                 f"{p.meta().id}:FriendMessage:{uid}", MessageChain([Comp.Plain(text=text)])
             )
-            return True
         except Exception as e:
             logger.info(f"{BTAG} 私聊告诉 {uid} 没发出去：{e!r}"[:160])
             return False
+        if sent is False:  # （11-10 v0.3.1 审查 VP1-2）AstrBot 说没发（找不到这个平台）：不算发到他手里 —— 没通知到的人不能被加重
+            logger.info(f"{BTAG} 私聊告诉 {uid} 没发出去：AstrBot 没找到能发的平台")
+            return False
+        return True
 
     async def _is_friend(self, uid):
         """现查一次好友列表 → True 是好友 / False 不是 / None 查不到"""
@@ -1880,8 +1886,8 @@ class FatfishCourt(Star):
         return f"没立案：{r.get('why') or res}。"
 
     # ───────── 删数据（给指令、面板、别的插件用）─────────
-    def forget_user(self, uid):
-        """删掉一个人的数据：
+    def forget_user(self, uid, by_name=True):
+        """删掉一个人的数据（by_name=False：自助的「忘记我」—— 教训只按 QQ 号删，不按名片连带，v0.3.1）：
         纠错庭：他指出的 / 关于他的 / 提到他的教训、他的案子和核对结果、跟他的格式纠错状态、最近聊天里他说的话、跟他的私聊记录；
         拉黑庭：记的他的话、线索、申诉、给模型的话整条删；名单 / 冷却那一项留着（不然删数据 = 解封）但名字、原因、原话抹掉；
                 冷却过只留号和时间；他的案子只留号、时间、判词、结果
@@ -1902,7 +1908,8 @@ class FatfishCourt(Star):
         }
         names |= set(self.msglog.names_of(uid))
         names = {n for n in names if n and len(n) >= 2}
-        n_lessons = self.lessons.wipe_user(uid, names)
+        # （11-10 v0.3.1 审查 VP1-8）「忘记我」谁都能发：以前按他当前的名片连带删教训，名片改成「核对过」就能删光所有人的
+        n_lessons = self.lessons.wipe_user(uid, names if by_name else ())
         other = self.court.forget_uid(uid) + self.verify.forget_uid(uid, names)
         for conv in list(self.chat):
             if conv.endswith(":" + uid) and ":FriendMessage:" in conv:
@@ -1991,7 +1998,7 @@ class FatfishCourt(Star):
     @fixup_cmd.command("忘记我")
     async def cmd_forget_me(self, event: AstrMessageEvent):
         """删掉我自己的数据（谁都能用）"""
-        r = self.forget_user(str(event.get_sender_id() or ""))
+        r = self.forget_user(str(event.get_sender_id() or ""), by_name=False)
         yield event.plain_result(
             f"删了你的数据：教训 {r['lessons']} 条，别的记录 {r['other']} 条。"
         )
@@ -2275,7 +2282,7 @@ class FatfishCourt(Star):
     @court_cmd.command("忘记我")
     async def court_forget_me(self, event: AstrMessageEvent):
         """删掉我自己的数据（谁都能用）"""
-        r = self.forget_user(str(event.get_sender_id() or ""))
+        r = self.forget_user(str(event.get_sender_id() or ""), by_name=False)
         yield event.plain_result(
             f"删了你的数据：教训 {r['lessons']} 条，别的记录 {r['other']} 条。"
         )
@@ -2309,7 +2316,8 @@ class FatfishCourt(Star):
             f"　群聊立案：{'开' if self._bon('group') else '关'}　私聊立案：{'开' if self._bon('private') else '关'}"
             f"　再审：{'开' if self._bon('retrial') else '关'}　二审：{'开' if self._bon('second') else '关'}",
             f"删除以后：永久不理（真做）· 删好友：{FRIEND_MODE[self.flow.cfg['friend_mode']]} · 清数据：{WIPE_MODE[self.flow.cfg['wipe_mode']]}"
-            f" · 每天最多开庭 {int(self.store.f('court_daily'))} 次、删除 {int(self.store.f('delete_daily'))} 个",
+            f" · 每天最多开庭 {int(self.store.f('court_daily'))} 次、删除 {int(self.store.f('delete_daily'))} 个"
+            f" · 判删除要：通知发到他手里以后还继续、核实过的话前后一共 ≥{int(self.store.f('delete_min_total'))} 句、分布在 ≥{int(self.store.f('delete_min_days'))} 天（不够只冷却）",
             f"冒充核对：{'开' if self._guard_on() else '关'}　申诉：{'开' if self._appeal_on() else '关'}　通知管理员：{'开' if self._bon('notify') else '关'}",
             f"今天：立案 {len(cs)}"
             + (f"（{'、'.join(f'{k} {n}' for k, n in res.items())}）" if res else ""),
@@ -2362,13 +2370,20 @@ class FatfishCourt(Star):
         if not cs:
             return "还没有案子。" if not qq else f"{qq} 没有案子。"
         rows = []
+
+        def down(x, k):  # v0.3.1：法官判了删除、代码压成冷却 / 不动的：写清差在哪
+            if x.get("verdict") == "删除" and x.get("result") != "删除" and x.get(k):
+                return f"（{short(x.get(k), 80)}）"
+            return ""
+
         for c in reversed(cs):
             rt = c.get("retrials") or []
             rows.append(
                 f"[{c.get('id')}] {md(c.get('t'))} {c.get('name') or ''}({c.get('uid')}) {c.get('stage') or ''}·{c.get('by') or '机器人'}立案"
                 f"（{short(c.get('why'), 20)}）→ 法官判 {c.get('verdict') or '—'}、核实 {c.get('n_ok') or 0} 句 → {c.get('result') or c.get('state')}"
+                + (down(c, "result_why"))
                 + (
-                    f"；再审 {len(rt)} 次（{'、'.join(str(r.get('result')) for r in rt)}）"
+                    f"；再审 {len(rt)} 次（{'、'.join(str(r.get('result')) + down(r, 'why') for r in rt)}）"
                     if rt
                     else ""
                 )

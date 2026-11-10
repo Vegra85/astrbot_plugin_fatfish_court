@@ -411,7 +411,10 @@ class LessonStore:
         return True
 
     def wipe_user(self, uid, names=()):
-        """删数据：他指出的、关于他这个号的、提到他名字 / QQ 号的教训整条删 → 删了几条"""
+        """删数据：他指出的、关于他这个号的、提到他名字 / QQ 号的教训整条删 → 删了几条
+        v0.3.1（11-10 审查 VP1-8）：按名字找只看事实教训的内容（什么情况 / 错的 / 对的 / 依据 / 话题词）——
+          「X指出、核对过」「回「X」（验证程序）」这种固定格式的字不看（他指出的、回他那个号的，上面按 QQ 号已经删了）；
+          以前名片叫「核对过」的人一删数据，所有事实教训都没了。names 传空 = 只按 QQ 号删（自助的「忘记我」）"""
         uid = str(uid)
         names = [str(n) for n in (names or ()) if n and len(str(n)) >= 2]
 
@@ -428,7 +431,12 @@ class LessonStore:
                 r"(?<!\d)" + re.escape(uid) + r"(?!\d)", blob
             ):
                 return True
-            return any(n in blob for n in names)
+            if x.get("kind", "事实") != "事实":
+                return False
+            free = " ".join(
+                str(x.get(k) or "") for k in ("when", "wrong", "right", "basis", "topic")
+            )
+            return any(n in free for n in names)
 
         n0 = len(self.lessons)
         self.lessons = [x for x in self.lessons if not about(x)]

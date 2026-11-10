@@ -66,7 +66,7 @@ SCREEN = """你在帮一个 QQ 聊天机器人核对：规则抓到一句话，�
 1. real：这个人是不是真的在指出「机器人那句话说错了 / 不对」（开玩笑、抬杠、接梗、说别的事、说别人、跟着起哄、反问着玩 → false）
 2. checkable：机器人被质疑的那句是不是能核对真假的说法（事实 / 数字 / 知识 / 它自己能做什么），而不是观点、玩笑、角色扮演
 3. evidence：他有没有给依据（0 = 光说不对，1 = 说了理由，2 = 给了出处 / 截图 / 具体反例）
-4. verdict：结合常识和前后文核对机器人那句：机器人错了 / 机器人没错 / 说不准（他自己说错了、只是抬杠 → 机器人没错；拿不准就写说不准，别猜）
+4. verdict：结合常识和前后文核对机器人那句：机器人错了 / 机器人没错 / 说不准（他自己说错了、只是抬杠 → 机器人没错；拿不准就写说不准，别猜）。只能原样写这三个里的一个；写成别的说法、多加别的字，都当你没给结论
 5. wrong：机器人那句里错的那个说法（机器人错了才写，20 字内）
 6. right：对的说法（机器人错了才写，20 字内；不知道就空着）
 7. basis：核对的依据（30 字内：他给的理由 / 常识 / 前后文里哪句）
@@ -75,6 +75,9 @@ SCREEN = """你在帮一个 QQ 聊天机器人核对：规则抓到一句话，�
 只输出 JSON：{"real": true/false, "checkable": true/false, "evidence": 0/1/2, "verdict": "机器人错了/机器人没错/说不准", "wrong": "", "right": "", "basis": "", "topic": "", "why": "一句话理由（20 字内）"}"""
 
 VERDICTS = ("错了", "没错", "说不准")
+# （11-10 v0.3.1 审查 VP1-7）判词只认这三个固定写法（以前：带「错」字就算机器人错了 ——「说不准，可能是他记错了」「机器人没说错」都读成错了；
+#   先找「不错」——「他说得不错」读成机器人没错）
+VERDICT_WORDS = {"机器人错了": "错了", "机器人没错": "没错", "说不准": "说不准"}
 EVIDENCE_TEXT = ("他光说不对，没给理由", "他说了理由", "他给了出处、截图或具体的反例")
 RESULT_TEXT = {
     "错了": "你那句确实不对",
@@ -157,7 +160,10 @@ def screen_input(case, chat=(), now=None, web=""):
 
 
 def parse_screen(raw):
-    """判断模型的回答 → 结论 dict；看不懂 → None"""
+    """判断模型的回答 → 结论 dict；看不懂 → None
+    v0.3.1：verdict 只认「机器人错了 / 机器人没错 / 说不准」原样（前后的空格、引号、句号不算）；
+           他真在纠正（real）而 verdict 不是这三个 / 没写 → None（没判成：不认错、不记教训、不给状态，不猜）；
+           不算纠正的（real 假）本来就不用 verdict：读不出就当说不准"""
     s = re.sub(r"<(think|thinking)>.*?</\1>", "", str(raw or ""), flags=re.S | re.I)
     m = re.search(r"\{.*\}", s, re.S)
     try:
@@ -170,16 +176,14 @@ def parse_screen(raw):
         ev = max(0, min(2, int(js.get("evidence") or 0)))
     except (TypeError, ValueError):
         ev = 0
-    vd = str(js.get("verdict") or "").strip()
-    if "没错" in vd or "没有错" in vd or "不错" in vd:
-        vd = "没错"
-    elif "错" in vd:
-        vd = "错了"
-    else:
-        vd = "说不准"
+    vd = VERDICT_WORDS.get(str(js.get("verdict") or "").strip(" \t\r\n\"'「」『』“”‘’。.！!"))
     real = js.get("real")
     if isinstance(real, str):
         real = real.strip().lower() in ("true", "1", "yes", "是")
+    if vd is None:
+        if real:
+            return None
+        vd = "说不准"
     chk = js.get("checkable")
     if isinstance(chk, str):
         chk = chk.strip().lower() in ("true", "1", "yes", "是")

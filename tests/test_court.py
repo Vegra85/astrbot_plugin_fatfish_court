@@ -145,13 +145,13 @@ check(
     "name: astrbot_plugin_fatfish_court" in META
     and "display_name: 鱼力max · 法庭" in META
     and "license: MIT" in META
-    and "version: v0.3.0" in META
+    and "version: v0.3.1" in META
     and "author: Vegra85" in META
     and "repo: https://github.com/Vegra85/astrbot_plugin_fatfish_court" in META,
     "metadata.yaml：名字 / 显示名 / 许可证 MIT / 版本 / 作者 / 仓库",
 )
 check(
-    'VERSION = "0.3.0"' in MAIN
+    'VERSION = "0.3.1"' in MAIN
     and 'PLUGIN_NAME = "astrbot_plugin_fatfish_court"' in MAIN,
     "main.py 的版本号、插件名跟 metadata 一样",
 )
@@ -539,10 +539,19 @@ check(
     S.trial_caps("再审", "删除", sorry, prior=3)["result"] == "不动",
     "再审：只引用了道歉 → 不动（像道歉的不算）",
 )
+# v0.3.1：判删除另加了门槛（通知发到他手里了、前后一共 3 句、分布在 2 天，见 tests/test_court_031.py）。
+#   S0 把新加的两个数放开成 1、当作通知过 —— 单看原来的「再审一共 2 句 / 二审这次 2 句」这两条
+S0 = bs.BlockStore(tmp / "v0.json", cfg={"delete_min_total": 1, "delete_min_days": 1})
 check(
-    S.trial_caps("再审", "删除", okv[:1], prior=0)["result"] == "不动"
-    and S.trial_caps("再审", "删除", okv[:1], prior=1)["result"] == "删除",
-    "再审：冷却期间 1 句 + 立案时 1 句 = 2 句才删除",
+    S0.trial_caps("再审", "删除", okv[:1], prior=0, told=True)["result"] == "不动"
+    and S0.trial_caps("再审", "删除", okv[:1], prior=1, told=True)["result"] == "删除",
+    "再审：冷却期间 1 句 + 立案时 1 句 = 2 句才删除（新加的删除门槛放开时）",
+)
+check(
+    S.trial_caps("再审", "删除", okv[:1], prior=1, told=True)["result"] == "不动"
+    and "3 句" in S.trial_caps("再审", "删除", okv[:1], prior=1, told=True)["why"],
+    "再审：默认配置下 1 + 1 = 2 句不够删除（v0.3.1：前后一共要 3 句、分布在 2 天）→ 不动",
+    S.trial_caps("再审", "删除", okv[:1], prior=1, told=True),
 )
 check(
     S.trial_caps("二审", "删除", okv[:1])["result"] == "冷却",
@@ -550,8 +559,13 @@ check(
 )
 check(
     S.trial_caps("二审", "保留", [])["result"] == "放过"
-    and S.trial_caps("二审", "删除", okv)["result"] == "删除",
-    "二审：保留 + 0 句 → 放过；删除 + 2 句 → 删除",
+    and S0.trial_caps("二审", "删除", okv, told=True)["result"] == "删除",
+    "二审：保留 + 0 句 → 放过；删除 + 2 句 → 删除（新加的删除门槛放开时）",
+)
+check(
+    S.trial_caps("二审", "删除", okv, told=True)["result"] == "冷却",
+    "二审：默认配置下这次 2 句、同一天、以前没有核实过的 → 不够删除（v0.3.1）→ 保留 → 再冷却",
+    S.trial_caps("二审", "删除", okv, told=True),
 )
 
 # ═══════════════ 6 流程（假的法官 / 假的 QQ）═══════════════
@@ -561,6 +575,7 @@ print("\n[6 流程：立案 → 一审 → 冷却中 → 再审 → 二审]")
 class FakeIO:
     def __init__(self):
         self.calls, self.notes, self.logs, self.order, self.tasks = [], [], [], [], []
+        self.told = []
         self.friend = True
         self.admins, self.white, self.ai = {ADMIN}, {WHITE}, {AI}
         self.mode = "smart"  # smart：照卷宗里带 BAD 的那几条判重；light：一律判轻；raise / slow / bad / inject
@@ -623,6 +638,11 @@ class FakeIO:
 
     async def notify(self, text):
         self.notes.append(text)
+        return True
+
+    async def tell(self, uid, text):
+        """v0.3.1：私聊通知发得到他手里（通知之后他还继续说的才算数；发不到的在 tests/test_court_031.py 里测）"""
+        self.told.append((uid, text))
         return True
 
     async def is_friend(self, uid):
@@ -694,6 +714,17 @@ def say(ml, uid, text, tag=bj.TAG_OWN, conv=G, ago=600, name=None, mid=None):
     )
 
 
+YESTERDAY = 90000  # 25 小时以前：肯定是另一天（v0.3.1：判删除要核实过的话分布在 2 天）
+
+
+def cooled_before(st, ml, uid, name=None):
+    """他以前被冷却过、三天前到点，那次的通知发到了他手里；昨天又冲机器人骂了一句
+    （v0.3.1：二审判删除要 上次通知过他 + 前后一共 3 句 + 分布在 2 天 —— 这里凑齐，下面各测各的）"""
+    st.mark_cooled(uid, int(time.time()) - 3 * 86400)
+    st.d["cooled"][uid]["told"] = int(time.time()) - 4 * 86400
+    say(ml, uid, "昨天也骂了 BAD", ago=YESTERDAY, name=name)
+
+
 async def flow_tests():
     # ── 一审：放过 ──
     st, ml, io, fl, _ = mk()
@@ -728,7 +759,7 @@ async def flow_tests():
 
     # ── 一审：冷却 → 冷却中收证据 → 再审 删除（影子）──
     st, ml, io, fl, _ = mk(scfg={"retrial_quiet_sec": 0.3})
-    say(ml, B, "你个废物 滚 BAD", ago=1200)
+    say(ml, B, "你个废物 滚 BAD", ago=YESTERDAY)  # v0.3.1：昨天骂的（判删除要分布在 2 天）
     say(ml, B, "今天群里好热闹", tag=bj.TAG_NOT, ago=1100)
     r = fl.file(B, "阿杉", "他骂我", G)
     # 占位期间他又冲机器人说话 → 收证据
@@ -765,9 +796,9 @@ async def flow_tests():
     await settle(io, 3)
     c = st.case(r["case"])
     check(
-        len(c.get("retrials") or []) == 1 and c["retrials"][0]["result"] == "不动",
-        "占位期间收的那句：判了冷却以后接着进第一次再审（那句不越线 → 不动）",
-        c.get("retrials"),
+        not c.get("retrials") and c["ev"][0].get("pre") and len(io.told) == 1,
+        "占位期间收的那句：只当背景（标「判决前说的」），不为它开再审（v0.3.1；以前：判了冷却以后接着进第一次再审）",
+        (c.get("retrials"), c.get("ev")),
     )
     n0 = len(io.calls)
     for i, tt in enumerate(
@@ -812,7 +843,7 @@ async def flow_tests():
     )
     check(
         any(
-            "再审第 2 次" in x and "本来会删" in x and "本来会清" in x for x in io.notes
+            "再审第 1 次" in x and "本来会删" in x and "本来会清" in x for x in io.notes
         ),
         "再审判删除 → 私聊告诉管理员（本来会删 / 本来会清）",
         io.notes[-1:],
@@ -923,7 +954,7 @@ async def flow_tests():
         "一个案子最多再审 retrial_max 次：用完了不再收证据、不再审",
     )
     st2, ml2, io2, fl2, _ = mk(scfg={"retrial_quiet_sec": 0.1})
-    say(ml2, C, "垃圾 BAD", ago=600)
+    say(ml2, C, "垃圾 BAD", ago=YESTERDAY)  # v0.3.1：昨天骂的（下面二审判删除要前后 3 句、分布在 2 天）
     r2 = fl2.file(C, "阿松", "骂人", G)
     await settle(io2)
     st2.d["cool"][C]["until"] = int(time.time()) - 1
@@ -963,7 +994,7 @@ async def flow_tests():
     c3 = st2.case(r3["case"])
     check(
         c3["result"] == "删除" and st2.is_blocked_forever(C),
-        "二审：这次核实 2 句 → 删除（永久不理）",
+        "二审：这次核实 2 句 + 上次核实过 1 句（昨天）、上次通知过他 → 删除（永久不理）",
         c3,
     )
     check(
@@ -1037,7 +1068,7 @@ async def flow_tests():
 
     # ── 删除：真删好友 / 真清数据的顺序；每天上限 ──
     st, ml, io, fl, _ = mk(cfg={"friend_mode": "auto", "wipe_mode": "auto"})
-    st.mark_cooled(E, int(time.time()) - 120)
+    cooled_before(st, ml, E)
     say(ml, E, "看见你就恶心 BAD", ago=40)
     say(ml, E, "滚 BAD", ago=30)
     r = fl.file(E, "小堇", "又骂", G)
@@ -1053,7 +1084,7 @@ async def flow_tests():
     )
     st, ml, io, fl, _ = mk(scfg={"delete_daily": 1})
     st.note_delete("19999", "某人", "x", case="other")
-    st.mark_cooled(E, int(time.time()) - 120)
+    cooled_before(st, ml, E)
     say(ml, E, "恶心 BAD", ago=40)
     say(ml, E, "滚 BAD", ago=30)
     r = fl.file(E, "小堇", "又骂", G)
@@ -1124,27 +1155,31 @@ async def flow_tests():
         "白名单冷却中他说的话：不收",
     )
     io.white.discard(B)
-    st.mark_cooled(B, int(time.time()) - 120)
+    cooled_before(st, ml, B)
     say(ml, B, "骂 BAD", ago=40)
     say(ml, B, "骂2 BAD", ago=30)
     io.judge_hook = lambda: io.white.add(B)  # 庭审期间被加进白名单
     r = fl.file(B, "阿杉", "骂我", G)
     await settle(io)
     check(
-        st.case(r["case"])["result"] == "冷却" and not st.is_blocked_forever(B),
+        st.case(r["case"])["result"] == "冷却"
+        and not st.is_blocked_forever(B)
+        and "白名单" in st.case(r["case"])["result_why"],
         "删除之前再看一眼保护：庭审期间进了白名单 → 不删（降成冷却）",
         st.case(r["case"]),
     )
     io.judge_hook = None
     io.white.discard(B)
-    st.mark_cooled(C, int(time.time()) - 120)
+    cooled_before(st, ml, C)
     say(ml, C, "骂 BAD", ago=40)
     say(ml, C, "骂2 BAD", ago=30)
     io.wipe_hook = lambda: io.white.add(C)  # 查好友那几秒里被加进白名单
     r = fl.file(C, "阿松", "骂我", G)
     await settle(io)
     check(
-        st.case(r["case"])["result"] == "冷却" and not st.is_blocked_forever(C),
+        st.case(r["case"])["result"] == "冷却"
+        and not st.is_blocked_forever(C)
+        and "白名单" in st.case(r["case"])["result_why"],
         "查好友那几秒里进了白名单：查完再看保护 → 不删",
         st.case(r["case"]),
     )
@@ -1152,7 +1187,7 @@ async def flow_tests():
 
     # ── 删数据：庭审期间 / 删除那一步删了他的数据 → 名单、通知里没有名字和原话 ──
     st, ml, io, fl, _ = mk()
-    st.mark_cooled(D, int(time.time()) - 120)
+    cooled_before(st, ml, D, name="阿岚")
     say(ml, D, "又是你这个废物 BAD", ago=40, name="阿岚")
     say(ml, D, "看见你就恶心 BAD", ago=30, name="阿岚")
     r = fl.file(D, "阿岚", "他又骂我", G)
@@ -1172,9 +1207,10 @@ async def flow_tests():
         n >= 1
         and not ml.msgs_for(D)
         and (
-            st.cooled_of(D) is None or set(st.d["cooled"].get(D, {})) <= {"t", "last"}
+            st.cooled_of(D) is None
+            or set(st.d["cooled"].get(D, {})) <= {"t", "last", "told"}
         ),
-        "删数据：记的话删掉、冷却过只留号和时间",
+        "删数据：记的话删掉、冷却过只留号和时间（v0.3.1：还有「那次通知过他」的记号）",
         st.d["cooled"].get(D),
     )
 
@@ -1630,7 +1666,7 @@ src = "\n".join(
 )
 check(not re.search(r"sk-[A-Za-z0-9]{16,}", src), "代码 / 文档里没有像 key 的东西")
 qq = [
-    x for x in re.findall(r"(?<![\d.])\d{8,11}(?![\d.])", src) if x not in ("1000000",)
+    x for x in re.findall(r"(?<![\d.])\d{8,11}(?![\d.])", src) if x not in ("1000000", "743856783")  # 743856783：README「反馈」里公开的 QQ 群（鱼力max部署交流群，Mario 11-09 定）
 ]
 check(not qq, "代码 / 文档里没有像 QQ 号 / 群号的长数字", qq[:5])
 check(

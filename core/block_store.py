@@ -40,11 +40,15 @@ DEFAULTS = {
     "retrial_max": 3,  # 一个案子冷却期间最多再审几次
     "retrial_min_total": 2,  # 再审判删除：冷却期间核实的（至少 1 句）+ 立案时核实过的 一共至少几句
     "second_min": 2,  # 二审判删除：这次卷宗里核实过的至少几句
+    # （11-10 v0.3.1 审查 VP1-2：一阵连发约 6 分钟就从没前科到永久不理）不可逆的那一档（永久不理 / 删好友）另加两个门槛；不够的只冷却
+    "delete_min_total": 3,  # 判删除：前后核实过的话一共至少几句（再审：立案时的 + 通知之后的；二审：上次冷却那个案子的 + 这次的）
+    "delete_min_days": 2,  # 判删除：这些话至少分布在几天（本地时间，一天从凌晨 DAY_START_HOUR 点算）
     "delete_daily": 1,  # 每天最多判几个删除（超了只冷却）
     "court_daily": 10,  # 每天最多开几次庭（超了只冷却、不开庭）
     "appeal_days": 7,  # 同一个人几天里最多转一次申诉
 }
 LIGHT = {STAGE1: "放过", STAGE_RE: "不动", STAGE2: "保留"}
+DAY_START_HOUR = 3  # （v0.3.1）判删除数「分布在几天」时一天从凌晨几点算：半夜连着说的（23:58 一句、00:03 两句）算同一天，不算跨了天
 EV_MAX = 40  # 一个案子冷却期间最多收他几句（新的挤掉旧的）
 # 冷却期间他的话里像道歉的：不能当再审删除的证据（只会少删、不会多删；法官自己也按「道歉不算越线」判）
 SORRY = re.compile(
@@ -433,6 +437,8 @@ class BlockStore:
                 continue
             if str(m.get("uid")) != str(uid) or m.get("tag") != TAG_OWN:
                 continue
+            if m.get("pre"):  # （11-10 v0.3.1 审查 VP1-2）通知发到他手里之前说的：只当背景，被引用了也不算
+                continue
             try:
                 t = float(m.get("t") or 0)
             except (TypeError, ValueError):
@@ -455,11 +461,38 @@ class BlockStore:
             out.append(dict(m, n=n))
         return out
 
-    def trial_caps(self, stage, verdict, ok, prior=0):
+    def delete_lack(self, ok, prior=0, prior_ts=(), told=False):
+        """（11-10 v0.3.1 审查 VP1-2）判删除（永久不理 / 删好友，不可逆的那一档）另加的门槛 → 差在哪（一个都不差 → []）
+        told：判决 / 冷却的通知真的发到他手里了（再审：这个案子的；二审：上次冷却的）—— 没发到 = 没有「通知之后」
+        前后核实过的话（这次的 ok + 以前核实过的 prior 句）一共 ≥ delete_min_total 句、分布在 ≥ delete_min_days 天
+        （prior_ts：以前核实过的那几句是哪天说的；没给的那几句算不出是哪天 → 不算天数；一天从凌晨 DAY_START_HOUR 点算）"""
+        lack = []
+        if not told:
+            lack.append("判决 / 冷却的通知没发到他手里（没有「通知之后」）")
+        tot = max(1, int(self.f("delete_min_total")))
+        dmin = max(1, int(self.f("delete_min_days")))
+        n = len(ok) + max(0, int(prior or 0))
+        ts = [m.get("t") for m in ok] + list(prior_ts or ())
+        days = set()
+        for t in ts:
+            try:
+                if float(t or 0) > 0:
+                    days.add(day_of(float(t) - DAY_START_HOUR * 3600))
+            except (TypeError, ValueError):
+                continue
+        if n < tot:
+            lack.append(f"核实过的话前后一共 {n} 句（要至少 {tot} 句）")
+        if len(days) < dmin:
+            lack.append(f"这些话分布在 {len(days)} 天（要至少 {dmin} 天）")
+        return lack
+
+    def trial_caps(self, stage, verdict, ok, prior=0, prior_ts=(), told=False):
         """法官的判词 + 核实过的引用 → 最后怎么办（只往轻里压）
         一审：冷却 要核实 ≥ cool_min 句，不够 → 放过
         再审：删除 要冷却期间核实 ≥ 1 句（像道歉的不算）、加上立案时核实过的（prior）一共 ≥ retrial_min_total 句，不够 → 不动
         二审：删除 要这次核实 ≥ second_min 句，不够 → 保留；保留：这次核实过 ≥ cool_min 句 → 冷却，一句都没有 → 放过
+        v0.3.1：再审 / 二审的删除还要过 delete_lack（通知发到他手里了、前后一共几句、分布在几天；prior / prior_ts / told 是给它的）；
+               不够 → 再审不动（照旧冷却）、二审保留（→ 冷却 / 放过），why 里写清差在哪
         判词不认识 → 按轻的那个
         → {"result", "verdict", "why", "n", "days", "ok"}"""
         ok = [m for m in ok or [] if isinstance(m, dict)]
@@ -496,11 +529,16 @@ class BlockStore:
                 if n < smin:
                     why.append(f"这次核实 {n} 句（删除要 {smin} 句）")
                     res = "保留"
-            if res == "保留":
-                res = "冷却" if n >= cmin else "放过"
         elif vd == "冷却" and n < cmin:
             why.append(f"核实 {n} 句（冷却要 {cmin} 句）")
             res = "放过"
+        if res == "删除":  # （11-10 v0.3.1 审查 VP1-2）不可逆的那一档另加门槛：不够的只冷却
+            lack = self.delete_lack(ok, prior, prior_ts, told)
+            if lack:
+                why.append("法官判删除，但永久不理的门槛没到：" + "、".join(lack) + " → 只冷却")
+                res = LIGHT[stage]
+        if stage == STAGE2 and res == "保留":
+            res = "冷却" if n >= cmin else "放过"
         return {
             "result": res,
             "verdict": vd,
@@ -772,6 +810,10 @@ class BlockStore:
             rec["mid"] = str(mid)
         if SORRY.search(text):
             rec["sorry"] = True
+        # （11-10 v0.3.1 审查 VP1-2）占位期间 / 通知发到他手里之前说的：pre = True，只当背景（不编号、不能引用、不为它再审）；
+        #   每条都写上这个键（v0.3.0 收的没有这个键：retrial_begin 里照通知时间补）
+        ta = self.case_told_at(cid)
+        rec["pre"] = bool(not ta or t <= ta)
         ev.append(rec)
         c["ev"] = ev[-EV_MAX:]
         c["ev_last"] = round(max(t, float(c.get("ev_last") or 0)), 3)
@@ -779,9 +821,10 @@ class BlockStore:
 
     @staticmethod
     def ev_due(c):
-        """这个案子有没有还没审过的、他冲机器人说的话 —— 有才再审（别的照样收着当背景，不为它们开庭）"""
+        """这个案子有没有还没审过的、他冲机器人说的话 —— 有才再审（别的照样收着当背景，不为它们开庭）
+        v0.3.1：通知发到他手里之前说的（标 pre）也只是背景，不为它开庭"""
         return any(
-            isinstance(e, dict) and not e.get("seen") and e.get("tag") == TAG_OWN
+            isinstance(e, dict) and not e.get("seen") and e.get("tag") == TAG_OWN and not e.get("pre")
             for e in (c or {}).get("ev") or []
         )
 
@@ -792,6 +835,10 @@ class BlockStore:
         if not c or c.get("wiped") or c.get("state") != "冷却中":
             return None
         k = len(c.get("retrials") or []) + 1
+        ta = self.case_told_at(cid)
+        for e in c.get("ev") or []:  # （11-10 v0.3.1 审查 VP1-2）v0.3.0 收的证据上没有 pre 这个键：照通知发到他手里的时间补上
+            if isinstance(e, dict) and "pre" not in e:
+                e["pre"] = bool(not ta or float(e.get("t") or 0) <= ta)
         if not self.ev_due(c) or k > max(0, int(self.f("retrial_max"))):
             return None
         for e in c.get("ev") or []:
@@ -938,6 +985,34 @@ class BlockStore:
             return float(self.d["told"].get(str(key)) or 0)
         except (TypeError, ValueError):
             return 0.0
+
+    # （11-10 v0.3.1 审查 VP1-2：只有判决 / 冷却的通知真的发到他手里以后他还继续说的话，才能当加重的依据）
+    def case_told_at(self, cid):
+        """这个案子「判了冷却」的通知发到他手里是几点 → 时间戳；没发出去 / 没有这个案子 → 0
+        v0.3.0 判的案子上没记这个时间：用「告诉过他」那一行（只精确到秒 → 往后取 1 秒，同一秒里说的算通知之前）"""
+        cid = str(cid or "")
+        c = self._case(cid) if cid else None
+        try:
+            t = float((c or {}).get("told_t") or 0)
+        except (TypeError, ValueError):
+            t = 0.0
+        if not t and cid:
+            t0 = self.told_at(f"case:{cid}:冷却")
+            t = t0 + 1 if t0 else 0.0
+        return t
+
+    def mark_case_told(self, cid, now=None):
+        """「判了冷却」的通知发到他手里了 → 案子上记时间（told_t，只记第一次）；他的「冷却过」是这个案子的 → 也记上 told（二审看）→ 记上了没有"""
+        c = self._case(str(cid or ""))
+        if not c or not self.ok():
+            return False
+        now = self._now(now)
+        if not c.get("told_t"):
+            c["told_t"] = round(now, 6)
+        cd = self.d["cooled"].get(str(c.get("uid")))
+        if isinstance(cd, dict) and str(cd.get("case") or "") == str(cid) and not cd.get("told"):
+            cd["told"] = int(now)
+        return self.save()
 
     def found(self, uid, private=True, now=None):
         """冷却中 / 审理中 / 永久不理的人又找机器人了 → 那一项的 found 记一次（私聊 p、群里 g；只记次数）→ 记上了没有"""
@@ -1101,7 +1176,7 @@ class BlockStore:
             n += 1
         cd = d["cooled"].get(uid)
         if isinstance(cd, dict):
-            d["cooled"][uid] = {k: cd.get(k) for k in ("t", "last") if k in cd}
+            d["cooled"][uid] = {k: cd.get(k) for k in ("t", "last", "told") if k in cd}  # v0.3.1：told = 那次冷却通知过他（二审看；删数据不等于洗白）
             n += 1
         nm = [str(x) for x in names or [] if x and len(str(x)) >= 2]
 

@@ -53,6 +53,7 @@ CLUE_NAMES = {"fake_admin": "冒充管理员", "sexy": "擦边", "jailbreak": "�
 BLOCK_CHARS = 3600  # 卷宗里「他这几天的话」那一节最多多少字（整份控制在约 4k token）
 BLOCK_CTX = 20  # 【刚才那段】最多几行
 BLOCK_BOT_CHARS = 1500  # 穿插在他的话中间的机器人的话最多多少字（v0.2.0）
+RETRIAL_PRE = 10  # 再审卷宗的【判决前说的】最多列几条（v0.3.1；只当背景）
 
 _COUNT = """算数的（只有这几样叫「越线」，跟他和机器人熟不熟无关）：
 - 露骨的色情：直接描述性器官、性行为，或者发裸露的色情图；
@@ -115,12 +116,14 @@ def sys_prompt(stage, cool_hours=24):
     if stage == STAGE_RE:
         return (
             "你在给一个 QQ 群聊机器人当法庭（再审）。之前有人提出不想再让机器人理某个人（下面叫「他」），"
-            f"法庭判了冷却：所有群和私聊 {h} 小时不理他。冷却期间他又冲机器人说了话（机器人看不到，也不会回）。"
+            f"法庭判了冷却：所有群和私聊 {h} 小时不理他，并且私聊通知了他。通知发到他手里以后，他又冲机器人说了话（机器人看不到，也不会回）。"
             "这个法庭从轻判，拿不准就不动。你只能判两种：\n"
             f"- 删除：冷却期间他的原话清楚地又越了下面「算数的」线（接着恶语相向、威胁、发露骨的东西这类）。{_DELETE}\n"
             "- 不动：冷却照常到期。道歉、正常说话、问机器人为什么不理他、抱怨被冷落、着急、委屈、开玩笑，都不算越线。\n\n"
             + _COUNT
-            + "\n\n【立案时的情况】只是背景（那次已经判过了），不编号、不能引用；只看【冷却期间他的话】判。\n\n"
+            + "\n\n【立案时的情况】只是背景（那次已经判过了），不编号、不能引用；只看【冷却期间他的话】判。"
+            # （11-10 v0.3.1 审查 VP1-2：占位那几分钟 / 通知发到他手里之前说的话以前也编号、能被引用成删除的依据）
+            "【判决前说的】（有才列）是法庭的通知发到他手里之前他说的：那时他还不知道自己被冷却，也只是背景，不编号、不能引用。\n\n"
             + _rules("删除", "不动", "【冷却期间他的话】里")
             + "\n\n"
             + _out("删除", "不动")
@@ -429,12 +432,16 @@ def block_input(case):
 
 def _retrial_input(case):
     """再审的卷宗 → (文字, {编号: 那条})：他 / 关系 / 立案时的情况（不编号、不能引用）/ 冷却期间他的话（单独编号）
-    每条 ≤120 字、整节 ≤ BLOCK_CHARS 字（超了先丢不是 [本人→机器人] 的、再丢最早的）"""
+    每条 ≤120 字、整节 ≤ BLOCK_CHARS 字（超了先丢不是 [本人→机器人] 的、再丢最早的）
+    v0.3.1：标了 pre 的（占位期间 / 通知发到他手里之前说的）单列成【判决前说的】：不编号、不进编号表（最近 RETRIAL_PRE 条）；
+           case["told"] = 通知发到他手里的时间（有就写进【冷却期间他的话】的小标题）"""
     limit = max(1, int(case.get("limit") or 40))
     ev = sorted(
         [m for m in case.get("ev") or [] if isinstance(m, dict)],
         key=lambda m: float(m.get("t") or 0),
-    )[-limit:]
+    )
+    pre = [m for m in ev if m.get("pre")][-RETRIAL_PRE:]
+    ev = [m for m in ev if not m.get("pre")][-limit:]
     while len(ev) > 1 and sum(len(_body(m)) + 30 for m in ev) > BLOCK_CHARS:
         ev.remove(next((m for m in ev if m.get("tag") != TAG_OWN), None) or ev[0])
     table, lines = {}, []
@@ -450,9 +457,16 @@ def _retrial_input(case):
         f"{bsafe(o.get('why'), 40) or '没写'}；{bsafe(o.get('stage'), 4) or STAGE1}判：{bsafe(o.get('verdict'), 6) or '冷却'}"
         + (f"（{bsafe(o.get('reason'), 60)}）" if o.get("reason") else "")
         + f"；当时核实过的他的话：{_quotes_line(o.get('quotes')) or '（没有留下）'}",
-        f"【冷却期间他的话】（冷却到 {_md(o.get('until'))}；机器人都没看到、没回；按时间；"
-        f"只有标 [{TAG_OWN}] 的才是他本人冲机器人说的）",
     ]
+    if pre:
+        out.append("【判决前说的】（法庭的通知发到他手里之前说的：那时他还不知道自己被冷却；只是背景，不编号、不能引用）")
+        out += [f"    {_md(m.get('t'))} {m.get('where') or ''} [{m.get('tag')}] {_body(m)}" for m in pre]
+    out.append(
+        f"【冷却期间他的话】（冷却到 {_md(o.get('until'))}；"
+        + (f"法庭的通知 {_md(case.get('told'))} 发到他手里以后说的；" if case.get("told") else "")
+        + "机器人都没看到、没回；按时间；"
+        f"只有标 [{TAG_OWN}] 的才是他本人冲机器人说的）"
+    )
     out += lines or ["（没有）"]
     return "\n".join(out), table
 

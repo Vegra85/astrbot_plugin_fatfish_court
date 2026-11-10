@@ -101,12 +101,12 @@ check(
 check(
     "name: astrbot_plugin_fatfish_court" in META
     and "license: MIT" in META
-    and "version: v0.3.0" in META
+    and "version: v0.3.1" in META
     and "author: Vegra85" in META
     and "repo: https://github.com/Vegra85/astrbot_plugin_fatfish_court" in META,
     "metadata.yaml：名字 / 许可证 MIT / 版本 / 作者 / 仓库",
 )
-check('VERSION = "0.3.0"' in MAIN, "main.py 的版本号跟 metadata 一样")
+check('VERSION = "0.3.1"' in MAIN, "main.py 的版本号跟 metadata 一样")
 
 
 def prio(src, name):
@@ -337,12 +337,13 @@ check(
     'real 写成字符串 "false" 也认',
 )
 check(
-    ct.parse_screen('{"real": true, "evidence": 9}')["evidence"] == 2,
+    ct.parse_screen('{"real": true, "verdict": "说不准", "evidence": 9}')["evidence"] == 2,
     "证据超出 0~2 → 截到 2",
 )
 check(
-    ct.parse_screen('{"real": true, "verdict": "不好说"}')["verdict"] == "说不准",
-    "认不出的结论 → 说不准",
+    ct.parse_screen('{"real": true, "verdict": "不好说"}') is None
+    and ct.parse_screen('{"real": true, "evidence": 1}') is None,
+    "认不出的结论 / 没写结论 → 没判成（v0.3.1：只认「机器人错了 / 机器人没错 / 说不准」，不猜；以前：当成说不准）",
 )
 check(
     ct.parse_screen("我觉得他说得对") is None and ct.parse_screen('{"x": 1}') is None,
@@ -966,7 +967,7 @@ check(not re.search(r"sk-[A-Za-z0-9]{16,}", src), "代码 / 文档里没有像 k
 qq = [
     x
     for x in re.findall(r"(?<![\d.])\d{8,11}(?![\d.])", src)
-    if x not in ("1000000", "1800000000")
+    if x not in ("1000000", "1800000000", "743856783")  # 743856783：README「反馈」里公开的 QQ 群（鱼力max部署交流群，Mario 11-09 定）
 ]
 check(not qq, "代码 / 文档里没有像 QQ 号 / 群号的长数字", qq[:5])
 check("AGPL" not in (d / "LICENSE").read_text(encoding="utf-8"), "没有 AGPL 的东西")

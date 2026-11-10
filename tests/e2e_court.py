@@ -525,6 +525,7 @@ def write_cfg(private=True, admin_file=True):
                     "cool_hours": COOL_HOURS,
                     "retrial_quiet_sec": 2,
                     "delete_daily": 5,
+                    "delete_min_days": 1,  # v0.3.1：判删除默认要核实过的话分布在 2 天；这里一两分钟里跑完整个流程 → 不看天数（天数在 test_court_031.py 里测）
                     "admin_file": admin_file,  # v0.2.0 默认关；5、7 要用「/法庭 立案」
                 },
                 "guard": {"admin_names": ["管理员甲"]},
@@ -784,7 +785,7 @@ async def main():
         )
         await asyncio.sleep(
             3.5
-        )  # 占位期间那句：判了冷却以后照规矩再审一次（那句不越线 → 不动）
+        )  # v0.3.1：占位期间那句标成「判决前说的」，不为它再审（以前：判了冷却以后再审一次 → 不动）；等一下再让他接着说
         nc = len(chat_calls)
         out, _ = await turn(qq, G1, A, "装死是吧 BAD", expect=False, quiet=1.0)
         out2, _ = await pturn(qq, A, "你个蠢货 BAD", expect=False, quiet=1.0)

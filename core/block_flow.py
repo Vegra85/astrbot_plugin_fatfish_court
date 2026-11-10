@@ -22,6 +22,12 @@ v0.2.0（照作者自己的机器人 11-07 ~ 11-08 v1.17.26–30）：
   衔接（bridge）：冷却到点 → 告诉他恢复了（暂停期间找过机器人的、会进二审的各加一句；夜里到点的等到点以后再说、他先来找就先说）；
     管理员撤销 → 告诉他（申诉过的写「看过你的申诉」）
   卷宗里穿插机器人回他的话（block_log.note_bot）
+v0.3.1（11-10 审查 VP1-2 / VP1-5）：
+  只有判决 / 冷却的通知真的发到他手里以后他还继续说的话，才能当加重的依据：占位期间、通知发出去之前说的只当背景
+    （案子里标 pre；再审卷宗单列【判决前说的】、不编号、不能引用、不为它开再审）；通知没发出去 → 没有「通知之后」→ 判不到删除
+  删除（永久不理 / 删好友）另加门槛：核实过的话前后一共 ≥ delete_min_total 句、分布在 ≥ delete_min_days 天（block_store.delete_lack）；
+    不够的只冷却（再审不动 / 二审保留 → 冷却），日志、案子记录、给管理员的那条里写清差在哪
+  second 关着：再审也不判删除（配置说明写的「永远不会被判删除」）
 io 要有：judge(system, text, timeout, meta) / notify(text) / is_friend(uid) / delete_friend(uid) / wipe(uid) /
         is_ai(uid) / is_admin(uid) / protected(uid) / spawn(coro) / log(text)；v0.2.0 可选 tell(uid, text)（私聊他；没有 = 不告诉他）
 """
@@ -523,7 +529,7 @@ class BlockCourt:
         ):
             self._rt_kick(
                 cid
-            )  # 占位期间他冲机器人说过话：判了冷却以后照冷却中的规矩等他说完再审
+            )  # 通知发到他手里以后他已经又冲机器人说了话：照冷却中的规矩等他说完再审（v0.3.1：占位期间说的标了 pre，不为它再审）
         return out
 
     def _keep_safe(self, uid):
@@ -555,7 +561,14 @@ class BlockCourt:
             res, rwhy = "没判成", fail
         else:
             ok = st.verify(v.get("cites"), table, uid, now)
-            cp = st.trial_caps(stage, v.get("verdict"), ok)
+            # （11-10 v0.3.1 审查 VP1-2）二审判删除另加的门槛：上次冷却通知过他、上次核实过的 + 这次的 一共几句、分布在几天
+            pv = (st.cooled_of(uid, now) or {}) if stage == STAGE2 else {}
+            pc = st.case(str(pv.get("case") or "")) or {}
+            pq = [q for q in pc.get("quotes") or [] if isinstance(q, dict)]
+            cp = st.trial_caps(
+                stage, v.get("verdict"), ok, prior=len(pq), prior_ts=[q.get("t") for q in pq],
+                told=bool(pv.get("told") or st.case_told_at(pv.get("case"))),
+            )
             ok = cp.get("ok", ok)
             res, rwhy = cp["result"], cp["why"]
         friend = None
@@ -807,7 +820,7 @@ class BlockCourt:
     def _did(self, res, rwhy, out, till):
         if res == "冷却":
             return f"冷却到 {md(till)}（所有群和私聊不理他）" + (
-                f"；冷却期间他冲机器人说的话只当证据收着（机器人看不到），说完安静 {int(self.store.f('retrial_quiet_sec')) // 60} 分钟再审"
+                f"；冷却期间他冲机器人说的话只当证据收着（机器人看不到），通知发到他手里以后说的、说完安静 {int(self.store.f('retrial_quiet_sec')) // 60} 分钟再审"
                 f"（最多 {int(self.store.f('retrial_max'))} 次）"
                 if out.get("evok")
                 else "；他在白名单里 / 再审关着：冷却中不收证据、不再审、不会被删除"
@@ -930,9 +943,12 @@ class BlockCourt:
             return False
         if not st.add_ev(c["id"], item, now):
             return False
+        pre = bool((((st.case(c["id"]) or {}).get("ev") or [{}])[-1]).get("pre"))
         self.log(
             f"「{c.get('name') or uid}」在{'审理' if c.get('state') == '审理中' else '冷却'}中冲机器人说的话 → 只当证据收进案子 {c['id']}"
-            f"（{item.get('tag')}；机器人看不到、不回）"
+            f"（{item.get('tag')}；机器人看不到、不回"
+            + ("；通知还没发到他手里：只当背景、不能引用、不为它再审" if pre else "")
+            + "）"
         )
         if c.get("state") == "冷却中":
             self._rt_kick(c["id"])
@@ -1002,6 +1018,7 @@ class BlockCourt:
             "now": now,
             "limit": EV_MAX,
             "ev": ev,
+            "told": self.store.case_told_at(c.get("id")),  # v0.3.1：通知发到他手里的时间（之前说的 ev 里标着 pre）
             "orig": {
                 "t": c.get("t"),
                 "why": c.get("why"),
@@ -1082,10 +1099,14 @@ class BlockCourt:
         else:
             ok = st.verify(v.get("cites"), table, uid, now)
             cp = st.trial_caps(
-                STAGE_RE, v.get("verdict"), ok, prior=int(c.get("n_ok") or 0)
+                STAGE_RE, v.get("verdict"), ok, prior=int(c.get("n_ok") or 0),
+                prior_ts=[q.get("t") for q in c.get("quotes") or [] if isinstance(q, dict)],
+                told=bool(st.case_told_at(cid)),  # （11-10 v0.3.1 审查 VP1-2）删除另加的门槛：通知到了、一共几句、分布在几天
             )
             ok = cp.get("ok", ok)
             res, rwhy = cp["result"], cp["why"]
+            if res == "删除" and not self.on("second"):  # （11-10 v0.3.1 审查 VP1-5）说明写的是关了二审「永远不会被判删除」，以前再审照样删
+                res, rwhy = "不动", "配置「冷却过的人再被立案：二审」关着：不判删除（照旧冷却）"
         friend = None
         if res == "删除":  # 先查好友（要 await）—— 保护、每天上限都在查完以后看
             friend = await self._friend_of(uid)
@@ -1408,6 +1429,8 @@ class BlockCourt:
             ok = await self._say(uid, verdict_text(res, until, stage, kind, self._nm(), friend_del))
             if ok:
                 self.store.mark_told(key)
+                if res == "冷却":  # （11-10 v0.3.1 审查 VP1-2）记下通知发到他手里的时间：这之后他还继续说的才能当加重的依据
+                    self.store.mark_case_told(cid, self.clock())
         finally:
             self._sending.discard(key)
         self.log(f"案子 {cid}（{stage}）的结果私聊告诉他了：{res}" if ok else f"案子 {cid}（{stage}）的结果没发出去（可能不是好友；他下次私聊机器人时再补）")
