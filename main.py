@@ -67,7 +67,7 @@ except Exception:
     _CMD_FILTERS = ()
 
 PLUGIN_NAME = "astrbot_plugin_fatfish_court"
-VERSION = "0.3.1"
+VERSION = "0.3.2"
 TAG = "[纠错]"  # 纠错庭的日志（跟原来的纠错插件一样）
 BTAG = "[法庭]"  # 拉黑庭 / 冒充核对 / 申诉的日志
 AIGUARD = "astrbot_plugin_fatfish_aiguard"

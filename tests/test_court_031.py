@@ -766,7 +766,7 @@ except Exception as e:  # noqa: BLE001
     MAINMOD, err = None, repr(e)
 check(MAINMOD is not None, "main.py 在假的 astrbot 包上能导入", err)
 META = (d / "metadata.yaml").read_text(encoding="utf-8")
-check(MAINMOD is not None and MAINMOD.VERSION == "0.3.1" and "version: v0.3.1" in META, "回退检查：版本号 0.3.1（main.py 和 metadata.yaml 一样）",
+check(MAINMOD is not None and MAINMOD.VERSION == "0.3.2" and "version: v0.3.2" in META, "回退检查：版本号 0.3.1（main.py 和 metadata.yaml 一样）",
       (getattr(MAINMOD, "VERSION", None), re.findall(r"version: .*", META)))
 check(
     "from astrbot.api import AstrBotConfig, logger" in (d / "main.py").read_text(encoding="utf-8")

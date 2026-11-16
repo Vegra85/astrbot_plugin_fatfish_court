@@ -2,7 +2,7 @@ name: astrbot_plugin_fatfish_court
 display_name: 鱼力max · 法庭
 desc: 先审再判：有人说机器人错了先核对再认，有人越红线法官看原话判，判了才冷却，能申诉。（原「大肥鱼 · 法庭」）细节和配置见 README。
 short_desc: 先审再判：不乱拉黑、不乱认错，判了才冷却，能申诉
-version: v0.3.1
+version: v0.3.2
 author: Vegra85
 repo: https://github.com/Vegra85/astrbot_plugin_fatfish_court
 license: MIT

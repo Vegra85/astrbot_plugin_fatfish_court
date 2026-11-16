@@ -145,13 +145,13 @@ check(
     "name: astrbot_plugin_fatfish_court" in META
     and "display_name: 鱼力max · 法庭" in META
     and "license: MIT" in META
-    and "version: v0.3.1" in META
+    and "version: v0.3.2" in META
     and "author: Vegra85" in META
     and "repo: https://github.com/Vegra85/astrbot_plugin_fatfish_court" in META,
     "metadata.yaml：名字 / 显示名 / 许可证 MIT / 版本 / 作者 / 仓库",
 )
 check(
-    'VERSION = "0.3.1"' in MAIN
+    'VERSION = "0.3.2"' in MAIN
     and 'PLUGIN_NAME = "astrbot_plugin_fatfish_court"' in MAIN,
     "main.py 的版本号、插件名跟 metadata 一样",
 )
